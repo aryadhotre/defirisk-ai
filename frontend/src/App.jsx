@@ -13,7 +13,7 @@ import Navbar from "./components/Navbar";
 import NoiseTexture from "./components/NoiseTexture";
 import "./index.css";
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
+const API_BASE = import.meta.env.VITE_API_BASE ?? "https://defirisk-ai-backend.onrender.com";
 
 function AppContent() {
   const location = useLocation();
@@ -175,7 +175,7 @@ function AppContent() {
                 path="/docs"
                 element={
                   <iframe
-                    src="http://127.0.0.1:8000/docs"
+                    src="https://defirisk-ai-backend.onrender.com/docs"
                     className="w-full h-[80vh] rounded-xl border border-white/10 bg-[#0a0e14]"
                     title="API Docs"
                   />

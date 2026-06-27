@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Trash2, AlertCircle, CheckCircle, Trash } from 'lucide-react';
 
-const API_BASE = "http://127.0.0.1:8000";
+const API_BASE = "https://defirisk-ai-backend.onrender.com";
 
 export default function SavedProjects() {
   const [projects, setProjects] = useState([]);

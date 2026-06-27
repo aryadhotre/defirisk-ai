@@ -58,7 +58,7 @@ app.include_router(analytics_router, prefix="/analytics", tags=["Analytics & His
 def root():
     return {
         "message": "🚀 DeFiRisk AI v2.0",
-        "docs": "http://127.0.0.1:8000/docs",
+        "docs": "https://defirisk-ai-backend.onrender.com/docs",
         "endpoints": {
             "/defi/projects": "Get all analyzed projects",
             "/defi/analyze_risk": "Analyze a protocol",
@@ -71,4 +71,4 @@ def root():
 
 print("✅ DeFiRisk AI backend started successfully!")
 print("📡 DeFiLlama integration enabled")
-print("🔗 API Docs: http://127.0.0.1:8000/docs")
+print("🔗 API Docs: https://defirisk-ai-backend.onrender.com/docs")

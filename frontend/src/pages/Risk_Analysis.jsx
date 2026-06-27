@@ -6,7 +6,7 @@ import FormField from "../components/FormField";
 
 console.log("✅ Risk_Analysis.jsx LOADED - NEW VERSION WITH DEFILLAMA FIX");
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:8000";
+const API_BASE = import.meta.env.VITE_API_BASE ?? "https://defirisk-ai-backend.onrender.com";
 const DEFILLAMA_BASE = `${API_BASE}/defillama`;
 const DEFI_BASE = `${API_BASE}/defi`;
 

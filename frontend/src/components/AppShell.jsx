@@ -20,7 +20,7 @@ export default function AppShell({ onRefresh }) {
           <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
             <h1 className="text-lg font-semibold tracking-tight text-white/90">Dashboard</h1>
             <div className="flex items-center gap-3 text-sm text-white/70">
-              <a href="http://127.0.0.1:8000/docs" className="hover:text-white">API Docs</a>
+              <a href="https://defirisk-ai-backend.onrender.com/docs" className="hover:text-white">API Docs</a>
               <span className="opacity-30">•</span>
               <button
                 onClick={onRefresh}

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { TrendingUp, TrendingDown, DollarSign, Activity } from 'lucide-react';
 
-const API_BASE = "http://127.0.0.1:8000";
+const API_BASE = "https://defirisk-ai-backend.onrender.com";
 
 export default function TVLAnalytics() {
   const [projects, setProjects] = useState([]);
