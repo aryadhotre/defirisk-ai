@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+body {
+  background: radial-gradient(circle at top left, #1b1b1f, #0e0e11 60%);
+  color: white;
+  font-family: 'Inter', sans-serif;
+}
+
+.noise {
+  background-image: url('https://grainy-gradients.vercel.app/noise.png');
+  opacity: 0.07;
+  mix-blend-mode: soft-light;
+}
+
+@keyframes sweep-slow {
+  0% { transform: translateX(-60%); opacity: 0.03; }
+  50% { transform: translateX(10%); opacity: 0.09; }
+  100% { transform: translateX(60%); opacity: 0.03; }
+}
+
+@keyframes breathe-slow {
+  0% { transform: scale(1); opacity: 0.25; }
+  50% { transform: scale(1.15); opacity: 0.35; }
+  100% { transform: scale(1); opacity: 0.25; }
+}
+
+@keyframes breathe-medium {
+  0% { transform: scale(1); opacity: 0.18; }
+  50% { transform: scale(1.22); opacity: 0.28; }
+  100% { transform: scale(1); opacity: 0.18; }
+}
+
+@keyframes slow-fade {
+  0% { opacity: 0.85; }
+  50% { opacity: 1; }
+  100% { opacity: 0.85; }
+}
+
+.animate-sweep-slow {
+  animation: sweep-slow 18s ease-in-out infinite;
+}
+
+.animate-breathe-slow {
+  animation: breathe-slow 22s ease-in-out infinite;
+}
+
+.animate-breathe-medium {
+  animation: breathe-medium 16s ease-in-out infinite;
+}
+
+.animate-slow-fade {
+  animation: slow-fade 20s ease-in-out infinite;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at center, transparent 60%, rgba(0,0,0,0.25));
+  z-index: -30;
+}
+
+@keyframes gradient-sweep {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.animate-\[gradient-sweep\] {
+  animation: gradient-sweep 6s linear infinite;
+  background-size: 400% 400%;
+}
+/* if tailwind purge strips it, you can create a class name in index.css and add it to elements */
