@@ -283,58 +283,51 @@ def get_analytics_summary(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Failed to fetch summary: {str(e)}")
 
 
+# Replace the existing test_defillama_api function in analytics_routes.py with this:
+
 @router.get("/test-defillama/{protocol_slug}")
 def test_defillama_api(protocol_slug: str):
     """
-    Test if DeFiLlama API is working for a specific protocol
-    Examples: aave, uniswap, curve, lido, gmx, pendle
+    Test DeFiLlama integration AND the new real-metric extraction.
+    Examples: aave-v3, uniswap, gmx-v2-perps, pendle
     """
     try:
-        logger.info(f"🧪 Testing DeFiLlama API for: {protocol_slug}")
-        
-        # Test 1: Get protocol data
+        logger.info(f"🧪 Testing DeFiLlama for: {protocol_slug}")
+
         data = defillama_service.get_protocol_data(protocol_slug, force_fresh=True)
-        
         if not data:
             return {
                 "status": "failed",
                 "protocol": protocol_slug,
                 "error": "No data returned from DeFiLlama",
-                "suggestion": "Try protocols like: aave, uniswap, curve, lido, gmx, pendle"
             }
-        
-        # Test 2: Extract info
+
         info = defillama_service.extract_protocol_info(data)
-        
-        # Test 3: Get historical data
-        historical = defillama_service.get_historical_tvl(protocol_slug, days=7)
-        
+
         return {
             "status": "success",
             "protocol": protocol_slug,
             "timestamp": datetime.utcnow().isoformat(),
-            "current_data": {
+            "extracted_metrics": {
                 "name": info["name"],
                 "tvl": info["total_value_locked"],
-                "liquidity_score": info["liquidity_score"],
-                "user_activity_score": info["user_activity_score"],
                 "audit_status": info["audit_status"],
-                "chains": info.get("chains", [])
+                "tvl_volatility_pct": info["tvl_volatility"],
+                "max_drawdown_pct": info["max_drawdown"],
+                "change_1d_pct": info["change_1d"],
+                "change_7d_pct": info["change_7d"],
+                "change_30d_pct": info["change_30d"],
+                "top_chain": info["top_chain"],
+                "top_chain_share_pct": info["top_chain_share"],
+                "chain_count": info["chain_count"],
+                "mcap_to_tvl": info["mcap_to_tvl"],
             },
-            "historical_data_points": len(historical),
-            "historical_sample": historical[-3:] if historical else [],
-            "api_working": True
+            "api_working": True,
         }
-        
     except Exception as e:
         logger.error(f"❌ Test failed: {e}")
         logger.exception("Full traceback:")
-        return {
-            "status": "error",
-            "protocol": protocol_slug,
-            "error": str(e),
-            "api_working": False
-        }
+        return {"status": "error", "protocol": protocol_slug, "error": str(e), "api_working": False}
 
 
 @router.get("/refresh-all")

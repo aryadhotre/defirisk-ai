@@ -2,27 +2,19 @@
 import { motion } from "framer-motion";
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import FormField from "../components/FormField";
-
-console.log("✅ Risk_Analysis.jsx LOADED - NEW VERSION WITH DEFILLAMA FIX");
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "https://defirisk-ai-backend.onrender.com";
 const DEFILLAMA_BASE = `${API_BASE}/defillama`;
-const DEFI_BASE = `${API_BASE}/defi`;
-
-console.log("🔧 API_BASE:", API_BASE);
-console.log("🔧 DEFILLAMA_BASE:", DEFILLAMA_BASE);
 
 export default function Risk_Analysis({ form, setForm, submitting, handleSubmit }) {
   const navigate = useNavigate();
   const [showSuccess, setShowSuccess] = useState(false);
-  
-  // Protocol search state
+
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const [searching, setSearching] = useState(false);
-  const [useManual, setUseManual] = useState(false);
+  const [selectedProtocol, setSelectedProtocol] = useState(null);
 
   // Search protocols from DeFiLlama
   const searchProtocols = async (query) => {
@@ -30,31 +22,16 @@ export default function Risk_Analysis({ form, setForm, submitting, handleSubmit 
       setSearchResults([]);
       return;
     }
-
-    console.log("🔍 Searching for:", query);
     setSearching(true);
     try {
       const url = `${DEFILLAMA_BASE}/search?q=${encodeURIComponent(query)}&limit=8`;
-      console.log("📡 API URL:", url);
-      
       const res = await fetch(url);
-      console.log("📥 Response status:", res.status);
-      
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      console.log("✅ Search results:", data);
-      console.log("📊 Results array:", data.results);
-      console.log("📊 Results length:", data.results ? data.results.length : 0);
-      
       setSearchResults(data.results || []);
-      const shouldShow = data.results && data.results.length > 0;
-      console.log("👁️ Should show dropdown:", shouldShow);
-      setShowDropdown(shouldShow);
+      setShowDropdown((data.results || []).length > 0);
     } catch (err) {
-      console.error("❌ Search error:", err);
+      console.error("Search error:", err);
       setSearchResults([]);
       setShowDropdown(false);
     } finally {
@@ -64,68 +41,58 @@ export default function Risk_Analysis({ form, setForm, submitting, handleSubmit 
 
   // Debounced search
   useEffect(() => {
-    if (useManual) return;
-    
     const timer = setTimeout(() => {
-      if (searchQuery) {
-        searchProtocols(searchQuery);
-      }
+      if (searchQuery) searchProtocols(searchQuery);
     }, 300);
-
     return () => clearTimeout(timer);
-  }, [searchQuery, useManual]);
+  }, [searchQuery]);
 
-  // Select protocol from dropdown
+  // Select protocol -> fetch full data -> auto-fill form
   const selectProtocol = async (protocol) => {
-    console.log("🎯 Selected protocol:", protocol);
-    
     try {
       const url = `${DEFILLAMA_BASE}/protocol/${protocol.slug}`;
-      console.log("📡 Fetching protocol data:", url);
-      
       const res = await fetch(url);
-      console.log("📥 Response status:", res.status);
-      
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const response = await res.json();
-      console.log("✅ Protocol data:", response);
-      
+
       if (response.success && response.data) {
         const data = response.data;
-        
-        // Populate form with real data
         setForm({
           name: data.name,
           protocol_type: data.protocol_type,
           total_value_locked: data.total_value_locked.toString(),
           audit_status: data.audit_status,
-          liquidity_score: data.liquidity_score.toString(),
-          user_activity_score: data.user_activity_score.toString(),
+          // kept for payload compatibility; backend ignores these now
+          liquidity_score: "0",
+          user_activity_score: "0",
+          slug: protocol.slug, // so backend fetches real metrics by slug
         });
-        
-        console.log("✅ Form populated:", data.name);
+        setSelectedProtocol(data);
         setSearchQuery(data.name);
         setShowDropdown(false);
       }
     } catch (err) {
-      console.error("❌ Error fetching protocol:", err);
-      alert(`Failed to load ${protocol.name}. Error: ${err.message}`);
+      console.error("Error fetching protocol:", err);
+      alert(`Failed to load ${protocol.name}. ${err.message}`);
     }
   };
 
   const onSubmit = async (e) => {
     e.preventDefault();
-    
     await handleSubmit(e);
-    
     setShowSuccess(true);
-    setTimeout(() => {
-      navigate("/dashboard");
-    }, 2000);
+    setTimeout(() => navigate("/dashboard"), 1800);
   };
+
+  const formatTVL = (value) => {
+    const n = Number(value);
+    if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+    if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+    if (n >= 1e3) return `$${(n / 1e3).toFixed(2)}K`;
+    return `$${n.toFixed(2)}`;
+  };
+
+  const canSubmit = selectedProtocol && form.name && form.total_value_locked;
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">
@@ -136,11 +103,10 @@ export default function Risk_Analysis({ form, setForm, submitting, handleSubmit 
       >
         <h1 className="text-3xl font-semibold tracking-tight">Risk Analysis</h1>
         <p className="text-white/60 text-sm">
-          Search for any DeFi protocol or enter data manually
+          Search a DeFi protocol — we pull live data and compute a risk profile from real on-chain metrics.
         </p>
       </motion.div>
 
-      {/* Success Message */}
       {showSuccess && (
         <motion.div
           initial={{ opacity: 0, y: -10 }}
@@ -157,200 +123,128 @@ export default function Risk_Analysis({ form, setForm, submitting, handleSubmit 
         onSubmit={onSubmit}
         className="rounded-2xl bg-white/5 backdrop-blur-xl border border-white/10 p-8 space-y-6"
       >
-        {/* Mode Toggle */}
-        <div className="flex items-center justify-between p-3 rounded-lg bg-black/20 border border-white/10">
-          <span className="text-sm text-white/70">
-            {useManual ? "📝 Manual Entry Mode" : "🔍 Auto-Fill from DeFiLlama"}
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              setUseManual(!useManual);
-              if (!useManual) {
-                setSearchQuery("");
-                setSearchResults([]);
-                setShowDropdown(false);
-              }
-            }}
-            className="px-3 py-1 rounded-lg text-xs bg-indigo-500/20 hover:bg-indigo-500/30 
-                       text-indigo-300 transition-all"
-          >
-            {useManual ? "Switch to Auto-Fill" : "Enter Manually"}
-          </button>
+        {/* Protocol Search */}
+        <div className="relative">
+          <label className="text-xs font-medium text-white/50">Search Protocol</label>
+          <div className="relative mt-1">
+            <input
+              type="text"
+              placeholder="Type to search (e.g., Uniswap, Aave, GMX)..."
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                if (selectedProtocol) setSelectedProtocol(null);
+              }}
+              onFocus={() => searchQuery && searchResults.length > 0 && setShowDropdown(true)}
+              className="w-full rounded-xl px-4 py-3 bg-black/40 border border-white/10
+                         focus:border-indigo-400/40 outline-none transition-all pr-10"
+            />
+            {searching && (
+              <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                <div className="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+              </div>
+            )}
+          </div>
+
+          {showDropdown && searchResults.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="absolute z-50 w-full mt-2 rounded-xl bg-[#0a0e14] border border-white/10
+                         shadow-xl max-h-80 overflow-y-auto"
+            >
+              {searchResults.map((protocol, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => selectProtocol(protocol)}
+                  className="w-full px-4 py-3 text-left hover:bg-white/5 transition-all
+                             border-b border-white/5 last:border-0 flex items-center gap-3"
+                >
+                  {protocol.logo && (
+                    <img src={protocol.logo} alt={protocol.name} className="w-8 h-8 rounded-full" />
+                  )}
+                  <div className="flex-1">
+                    <div className="font-medium text-white">{protocol.name}</div>
+                    <div className="text-xs text-white/50">
+                      {protocol.category} • TVL: ${(protocol.tvl / 1e6).toFixed(1)}M
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </motion.div>
+          )}
         </div>
 
-        {/* Protocol Search (Auto-Fill Mode) */}
-        {!useManual && (
-          <div className="relative">
-            <label className="text-xs font-medium text-white/50">Search Protocol</label>
-            <div className="relative mt-1">
-              <input
-                type="text"
-                placeholder="Type to search (e.g., Uniswap, Aave)..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onFocus={() => searchQuery && setShowDropdown(true)}
-                className="w-full rounded-xl px-4 py-3 bg-black/40 border border-white/10 
-                           focus:border-indigo-400/40 outline-none transition-all pr-10"
-              />
-              {searching && (
-                <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                  <div className="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+        {/* Selected protocol preview (read-only, auto-filled) */}
+        {selectedProtocol && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-xl bg-black/30 border border-white/10 p-5 space-y-3"
+          >
+            <div className="flex items-center gap-3">
+              {selectedProtocol.logo && (
+                <img src={selectedProtocol.logo} alt={selectedProtocol.name} className="w-10 h-10 rounded-full" />
+              )}
+              <div>
+                <div className="font-semibold text-white">{selectedProtocol.name}</div>
+                <div className="text-xs text-white/50">{selectedProtocol.protocol_type}</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 text-sm pt-2">
+              <div className="flex flex-col">
+                <span className="text-white/40 text-xs">Total Value Locked</span>
+                <span className="text-white font-medium">{formatTVL(form.total_value_locked)}</span>
+              </div>
+              <div className="flex flex-col">
+                <span className="text-white/40 text-xs">Audit Status</span>
+                <span className={`font-medium ${
+                  form.audit_status === "Audited" ? "text-green-400" : "text-orange-400"
+                }`}>
+                  {form.audit_status}
+                </span>
+              </div>
+              {selectedProtocol.chains && (
+                <div className="flex flex-col col-span-2">
+                  <span className="text-white/40 text-xs">Chains</span>
+                  <span className="text-white/80 text-xs">
+                    {selectedProtocol.chains.slice(0, 6).join(", ")}
+                    {selectedProtocol.chains.length > 6 ? ` +${selectedProtocol.chains.length - 6} more` : ""}
+                  </span>
                 </div>
               )}
             </div>
 
-            {/* Search Results Dropdown */}
-            {showDropdown && searchResults.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0, y: -10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="absolute z-50 w-full mt-2 rounded-xl bg-[#0a0e14] border border-white/10 
-                           shadow-xl max-h-80 overflow-y-auto"
-              >
-                {searchResults.map((protocol, i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => selectProtocol(protocol)}
-                    className="w-full px-4 py-3 text-left hover:bg-white/5 transition-all 
-                               border-b border-white/5 last:border-0 flex items-center gap-3"
-                  >
-                    {protocol.logo && (
-                      <img src={protocol.logo} alt={protocol.name} className="w-8 h-8 rounded-full" />
-                    )}
-                    <div className="flex-1">
-                      <div className="font-medium text-white">{protocol.name}</div>
-                      <div className="text-xs text-white/50">
-                        {protocol.category} • TVL: ${(protocol.tvl / 1e6).toFixed(1)}M
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </motion.div>
-            )}
-          </div>
+            <p className="text-xs text-white/40 pt-1">
+              Risk will be computed from live volatility, drawdown, chain concentration, and momentum.
+            </p>
+          </motion.div>
         )}
-
-        {/* Project Name (Manual Mode) */}
-        {useManual && (
-          <FormField
-            label="Project Name"
-            type="text"
-            placeholder="e.g., Uniswap V3"
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-          />
-        )}
-
-        {/* Protocol Type */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-white/50">Protocol Type</label>
-          <select
-            value={form.protocol_type}
-            onChange={(e) => setForm({ ...form, protocol_type: e.target.value })}
-            className="w-full rounded-xl px-4 py-3 bg-black/40 border border-white/10 
-                       focus:border-indigo-400/40 outline-none transition-all text-white
-                       [&>option]:bg-[#0a0e14] [&>option]:text-white"
-            required
-          >
-            <option value="" disabled>Select protocol type</option>
-            <option value="DEX">DEX (Decentralized Exchange)</option>
-            <option value="Lending">Lending / Borrowing</option>
-            <option value="Derivatives">Derivatives / Perpetuals</option>
-            <option value="Yield">Yield Farming</option>
-            <option value="Staking">Staking</option>
-            <option value="Options">Options Trading</option>
-          </select>
-        </div>
-
-        {/* Audit Status */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-white/50">Audit Status</label>
-          <select
-            value={form.audit_status}
-            onChange={(e) => setForm({ ...form, audit_status: e.target.value })}
-            className="w-full rounded-xl px-4 py-3 bg-black/40 border border-white/10 
-                       focus:border-indigo-400/40 outline-none transition-all text-white
-                       [&>option]:bg-[#0a0e14] [&>option]:text-white"
-            required
-          >
-            <option value="Audited">Audited ✅</option>
-            <option value="Unaudited">Unaudited ⚠️</option>
-          </select>
-        </div>
-
-        {/* TVL */}
-        <FormField
-          label="Total Value Locked (USD)"
-          type="number"
-          placeholder="e.g., 450000000"
-          value={form.total_value_locked}
-          onChange={(e) => setForm({ ...form, total_value_locked: e.target.value })}
-        />
-
-        {/* Liquidity Score */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-white/50">Liquidity Score (0-100)</label>
-          <input
-            type="number"
-            min="0"
-            max="100"
-            placeholder="e.g., 85"
-            value={form.liquidity_score}
-            onChange={(e) => setForm({ ...form, liquidity_score: e.target.value })}
-            className="w-full rounded-xl px-4 py-3 bg-black/40 border border-white/10 
-                       focus:border-indigo-400/40 outline-none transition-all"
-            required
-          />
-          <span className="text-xs text-white/40 mt-1">
-            Auto-filled from DeFiLlama or enter manually
-          </span>
-        </div>
-
-        {/* User Activity */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-white/50">User Activity Score (0-100)</label>
-          <input
-            type="number"
-            min="0"
-            max="100"
-            placeholder="e.g., 90"
-            value={form.user_activity_score}
-            onChange={(e) => setForm({ ...form, user_activity_score: e.target.value })}
-            className="w-full rounded-xl px-4 py-3 bg-black/40 border border-white/10 
-                       focus:border-indigo-400/40 outline-none transition-all"
-            required
-          />
-          <span className="text-xs text-white/40 mt-1">
-            Auto-filled from DeFiLlama or enter manually
-          </span>
-        </div>
 
         {/* Submit */}
         <button
           type="submit"
-          disabled={submitting}
-          className="w-full py-3 rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500 
-                     font-semibold transition-all duration-200 hover:shadow-lg 
-                     hover:shadow-indigo-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={submitting || !canSubmit}
+          className="w-full py-3 rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500
+                     font-semibold transition-all duration-200 hover:shadow-lg
+                     hover:shadow-indigo-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
         >
-          {submitting ? "Analyzing..." : "Analyze Risk →"}
+          {submitting ? "Analyzing..." : selectedProtocol ? "Analyze Risk →" : "Select a protocol first"}
         </button>
       </motion.form>
 
-      {/* Info */}
       <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         className="rounded-xl bg-indigo-500/5 border border-indigo-500/10 p-5 space-y-2"
       >
-        <h3 className="text-sm font-semibold text-indigo-400">
-          🚀 Powered by DeFiLlama
-        </h3>
+        <h3 className="text-sm font-semibold text-indigo-400">🚀 Powered by DeFiLlama</h3>
         <p className="text-xs text-white/60 leading-relaxed">
-          Real-time data from 6000+ DeFi protocols across 80+ blockchains. Data is auto-filled
-          when you search for a protocol, or you can enter data manually.
+          Live data from 6000+ DeFi protocols across 80+ blockchains. Risk scores are computed
+          from real TVL volatility, peak-to-trough drawdown, chain concentration, and momentum —
+          not manual estimates.
         </p>
       </motion.div>
     </div>

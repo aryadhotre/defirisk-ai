@@ -9,9 +9,9 @@ export default function Dashboard({ projects, loadingList, kpis }) {
   const [selectedProject, setSelectedProject] = useState(null);
 
   const getRiskColor = (score) => {
-    if (score <= 30) return "text-green-400";
+    if (score <= 25) return "text-green-400";
     if (score <= 50) return "text-yellow-400";
-    if (score <= 70) return "text-orange-400";
+    if (score <= 75) return "text-orange-400";
     return "text-red-400";
   };
 
@@ -25,6 +25,9 @@ export default function Dashboard({ projects, loadingList, kpis }) {
     return colors[level] || colors.Medium;
   };
 
+  const changeColor = (v) => (v > 0 ? "text-green-400" : v < 0 ? "text-red-400" : "text-white/50");
+  const fmtPct = (v) => (v === null || v === undefined ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(2)}%`);
+
   return (
     <div className="space-y-10">
       <motion.h1
@@ -35,7 +38,6 @@ export default function Dashboard({ projects, loadingList, kpis }) {
         Dashboard
       </motion.h1>
 
-      {/* KPI CARDS */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
@@ -46,16 +48,13 @@ export default function Dashboard({ projects, loadingList, kpis }) {
         <KPICard title="Total TVL" value={kpis.tvl.toLocaleString()} />
       </motion.div>
 
-      {/* TABLE */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         className="rounded-2xl bg-white/5 backdrop-blur-xl border border-white/10 p-6 shadow-xl"
       >
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold tracking-wide text-white/80">
-            Projects
-          </h2>
+          <h2 className="text-sm font-semibold tracking-wide text-white/80">Projects</h2>
           <span className="text-xs text-white/50">{projects.length} total</span>
         </div>
 
@@ -67,7 +66,7 @@ export default function Dashboard({ projects, loadingList, kpis }) {
                 <Th>Name</Th>
                 <Th>Type</Th>
                 <Th className="text-right">TVL</Th>
-                <Th>Audit</Th>
+                <Th className="text-right">7d</Th>
                 <Th className="text-right">Risk Score</Th>
                 <Th>Risk Level</Th>
                 <Th className="text-center">Details</Th>
@@ -75,33 +74,20 @@ export default function Dashboard({ projects, loadingList, kpis }) {
             </thead>
             <tbody>
               {loadingList ? (
-                <tr>
-                  <td className="p-4 text-white/60" colSpan={8}>
-                    Loading…
-                  </td>
-                </tr>
+                <tr><td className="p-4 text-white/60" colSpan={8}>Loading…</td></tr>
               ) : projects.length === 0 ? (
-                <tr>
-                  <td className="p-4 text-white/60" colSpan={8}>
-                    No projects yet. Add one from Risk Analysis.
-                  </td>
-                </tr>
+                <tr><td className="p-4 text-white/60" colSpan={8}>No projects yet. Add one from Risk Analysis.</td></tr>
               ) : (
                 projects.map((p, i) => (
-                  <tr
-                    key={p.id}
-                    className="border-t border-white/10 hover:bg-white/5 transition"
-                  >
+                  <tr key={p.id} className="border-t border-white/10 hover:bg-white/5 transition">
                     <Td>{i + 1}</Td>
                     <Td className="font-medium">{p.name}</Td>
                     <Td className="text-white/60">{p.protocol_type}</Td>
                     <Td className="text-right text-white/70">
                       ${(p.total_value_locked / 1000000).toFixed(1)}M
                     </Td>
-                    <Td>
-                      <span className={p.audit_status === "Audited" ? "text-green-400" : "text-orange-400"}>
-                        {p.audit_status}
-                      </span>
+                    <Td className={`text-right font-medium ${changeColor(p.change_7d ?? 0)}`}>
+                      {fmtPct(p.change_7d)}
                     </Td>
                     <Td className={`text-right font-semibold ${getRiskColor(p.risk_score)}`}>
                       {p.risk_score}
@@ -127,49 +113,81 @@ export default function Dashboard({ projects, loadingList, kpis }) {
         </div>
       </motion.div>
 
-      {/* RISK BREAKDOWN PANEL */}
-      {selectedProject && selectedProject.risk_breakdown && (
+      {/* DETAIL PANEL — breakdown + real signals */}
+      {selectedProject && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
-          className="rounded-2xl bg-white/5 backdrop-blur-xl border border-white/10 p-6"
+          className="rounded-2xl bg-white/5 backdrop-blur-xl border border-white/10 p-6 space-y-6"
         >
-          <h3 className="text-lg font-semibold mb-4">
-            Risk Breakdown: {selectedProject.name}
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="p-4 rounded-xl bg-white/5 border border-white/10">
-              <div className="text-xs text-white/50 mb-1">Smart Contract Risk (35%)</div>
-              <div className={`text-2xl font-semibold ${getRiskColor(selectedProject.risk_breakdown.smart_contract_risk)}`}>
-                {selectedProject.risk_breakdown.smart_contract_risk}
-              </div>
-              <div className="text-xs text-white/40 mt-1">Audit quality, code security</div>
-            </div>
+          <h3 className="text-lg font-semibold">{selectedProject.name} — Risk Detail</h3>
 
-            <div className="p-4 rounded-xl bg-white/5 border border-white/10">
-              <div className="text-xs text-white/50 mb-1">Liquidity Risk (30%)</div>
-              <div className={`text-2xl font-semibold ${getRiskColor(selectedProject.risk_breakdown.liquidity_risk)}`}>
-                {selectedProject.risk_breakdown.liquidity_risk}
+          {/* Real signals row */}
+          <div>
+            <div className="text-xs text-white/50 mb-2 uppercase tracking-wide">Live Signals</div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                <div className="text-xs text-white/50">TVL Volatility (30d)</div>
+                <div className="text-xl font-semibold text-white">{selectedProject.tvl_volatility?.toFixed(2) ?? "—"}%</div>
               </div>
-              <div className="text-xs text-white/40 mt-1">TVL depth, market liquidity</div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-white/5 border border-white/10">
-              <div className="text-xs text-white/50 mb-1">Financial Risk (20%)</div>
-              <div className={`text-2xl font-semibold ${getRiskColor(selectedProject.risk_breakdown.financial_risk)}`}>
-                {selectedProject.risk_breakdown.financial_risk}
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                <div className="text-xs text-white/50">Max Drawdown (30d)</div>
+                <div className="text-xl font-semibold text-orange-400">{selectedProject.max_drawdown?.toFixed(2) ?? "—"}%</div>
               </div>
-              <div className="text-xs text-white/40 mt-1">User activity, stability</div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-white/5 border border-white/10">
-              <div className="text-xs text-white/50 mb-1">Operational Risk (15%)</div>
-              <div className={`text-2xl font-semibold ${getRiskColor(selectedProject.risk_breakdown.operational_risk)}`}>
-                {selectedProject.risk_breakdown.operational_risk}
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                <div className="text-xs text-white/50">30d Change</div>
+                <div className={`text-xl font-semibold ${changeColor(selectedProject.change_30d ?? 0)}`}>
+                  {fmtPct(selectedProject.change_30d)}
+                </div>
               </div>
-              <div className="text-xs text-white/40 mt-1">Governance, maturity</div>
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                <div className="text-xs text-white/50">Chain Concentration</div>
+                <div className="text-xl font-semibold text-white">
+                  {selectedProject.top_chain_share?.toFixed(0) ?? "—"}%
+                </div>
+                <div className="text-xs text-white/40">
+                  {selectedProject.top_chain} · {selectedProject.chain_count} chains
+                </div>
+              </div>
             </div>
           </div>
+
+          {/* Breakdown — corrected weights */}
+          {selectedProject.risk_breakdown && (
+            <div>
+              <div className="text-xs text-white/50 mb-2 uppercase tracking-wide">Risk Breakdown</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                  <div className="text-xs text-white/50 mb-1">Smart Contract Risk (30%)</div>
+                  <div className={`text-2xl font-semibold ${getRiskColor(selectedProject.risk_breakdown.smart_contract_risk)}`}>
+                    {selectedProject.risk_breakdown.smart_contract_risk}
+                  </div>
+                  <div className="text-xs text-white/40 mt-1">Audit status · TVL-at-risk</div>
+                </div>
+                <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                  <div className="text-xs text-white/50 mb-1">Liquidity Risk (25%)</div>
+                  <div className={`text-2xl font-semibold ${getRiskColor(selectedProject.risk_breakdown.liquidity_risk)}`}>
+                    {selectedProject.risk_breakdown.liquidity_risk}
+                  </div>
+                  <div className="text-xs text-white/40 mt-1">TVL depth · volatility · concentration</div>
+                </div>
+                <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                  <div className="text-xs text-white/50 mb-1">Financial Risk (25%)</div>
+                  <div className={`text-2xl font-semibold ${getRiskColor(selectedProject.risk_breakdown.financial_risk)}`}>
+                    {selectedProject.risk_breakdown.financial_risk}
+                  </div>
+                  <div className="text-xs text-white/40 mt-1">Volatility · drawdown · valuation</div>
+                </div>
+                <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+                  <div className="text-xs text-white/50 mb-1">Operational Risk (20%)</div>
+                  <div className={`text-2xl font-semibold ${getRiskColor(selectedProject.risk_breakdown.operational_risk)}`}>
+                    {selectedProject.risk_breakdown.operational_risk}
+                  </div>
+                  <div className="text-xs text-white/40 mt-1">Chain concentration · TVL trend</div>
+                </div>
+              </div>
+            </div>
+          )}
         </motion.div>
       )}
     </div>

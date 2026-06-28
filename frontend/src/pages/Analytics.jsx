@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { TrendingUp, TrendingDown, DollarSign, Activity } from 'lucide-react';
 
-const API_BASE = "https://defirisk-ai-backend.onrender.com";
+const API_BASE = import.meta.env.VITE_API_BASE ?? "https://defirisk-ai-backend.onrender.com";
 
 export default function TVLAnalytics() {
   const [projects, setProjects] = useState([]);
@@ -18,9 +18,7 @@ export default function TVLAnalytics() {
   }, []);
 
   useEffect(() => {
-    if (selectedProject) {
-      loadHistory(selectedProject.id);
-    }
+    if (selectedProject) loadHistory(selectedProject.id);
   }, [selectedProject, timeframe]);
 
   const loadProjects = async () => {
@@ -28,9 +26,7 @@ export default function TVLAnalytics() {
       const res = await fetch(`${API_BASE}/defi/projects`);
       const data = await res.json();
       setProjects(data);
-      if (data.length > 0) {
-        setSelectedProject(data[0]);
-      }
+      if (data.length > 0) setSelectedProject(data[0]);
     } catch (err) {
       console.error('Error loading projects:', err);
     } finally {
@@ -52,14 +48,11 @@ export default function TVLAnalytics() {
     try {
       const res = await fetch(`${API_BASE}/analytics/history/${projectId}?days=${timeframe}`);
       const data = await res.json();
-      
-      // Transform data for chart
       const chartData = data.history.map(h => ({
         date: new Date(h.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-        tvl: h.tvl / 1000000, // Convert to millions
+        tvl: h.tvl / 1000000,
         fullDate: h.timestamp
       }));
-      
       setHistoryData(chartData);
     } catch (err) {
       console.error('Error loading history:', err);
@@ -73,32 +66,17 @@ export default function TVLAnalytics() {
     return `$${value.toFixed(2)}`;
   };
 
-  const calculateChange = (project) => {
-    const trend = trends.find(t => t.project_id === project.id);
-    if (!trend) return { value: 0, percent: 0 };
-    
-    // Calculate TVL change from history if available
-    if (historyData.length >= 2) {
-      const oldest = historyData[0].tvl * 1000000;
-      const newest = historyData[historyData.length - 1].tvl * 1000000;
-      const change = newest - oldest;
-      const percent = (change / oldest) * 100;
-      return { value: change, percent };
+  const changeColor = (v) => (v > 0 ? 'text-green-400' : v < 0 ? 'text-red-400' : 'text-white/50');
+  const fmtPct = (v) => (v === null || v === undefined ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(2)}%`);
+
+  const getRiskBadge = (level) => {
+    switch (level) {
+      case 'Low': return 'bg-green-500/20 text-green-400';
+      case 'Medium': return 'bg-yellow-500/20 text-yellow-400';
+      case 'High': return 'bg-orange-500/20 text-orange-400';
+      case 'Critical': return 'bg-red-500/20 text-red-400';
+      default: return 'bg-gray-500/20 text-gray-400';
     }
-    
-    return { value: 0, percent: 0 };
-  };
-
-  const getTrendColor = (percent) => {
-    if (percent > 0) return 'text-green-400';
-    if (percent < 0) return 'text-red-400';
-    return 'text-gray-400';
-  };
-
-  const getTrendIcon = (percent) => {
-    if (percent > 0) return <TrendingUp className="w-4 h-4" />;
-    if (percent < 0) return <TrendingDown className="w-4 h-4" />;
-    return <Activity className="w-4 h-4" />;
   };
 
   if (loading) {
@@ -109,17 +87,19 @@ export default function TVLAnalytics() {
     );
   }
 
+  const avgRisk = projects.length > 0
+    ? (projects.reduce((sum, p) => sum + (p.risk_score || 0), 0) / projects.length).toFixed(1)
+    : '0';
+
   return (
     <div className="max-w-7xl mx-auto px-6 py-8">
-      {/* Header */}
       <div className="mb-8">
         <h1 className="text-4xl font-bold text-white mb-2">Protocol Analytics</h1>
         <p className="text-white/60">Track TVL movements and market performance</p>
       </div>
 
-      {/* Market Overview Grid */}
+      {/* Overview */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        {/* Total Market TVL */}
         <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-6 border border-white/10">
           <div className="flex items-center gap-2 text-white/60 mb-2">
             <DollarSign className="w-4 h-4" />
@@ -129,8 +109,6 @@ export default function TVLAnalytics() {
             {formatTVL(projects.reduce((sum, p) => sum + (p.total_value_locked || 0), 0))}
           </div>
         </div>
-
-        {/* Tracked Protocols */}
         <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-6 border border-white/10">
           <div className="flex items-center gap-2 text-white/60 mb-2">
             <Activity className="w-4 h-4" />
@@ -138,56 +116,39 @@ export default function TVLAnalytics() {
           </div>
           <div className="text-3xl font-bold text-white">{projects.length}</div>
         </div>
-
-        {/* Avg Risk */}
         <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-6 border border-white/10">
           <div className="flex items-center gap-2 text-white/60 mb-2">
             <Activity className="w-4 h-4" />
             <span className="text-sm font-medium">Average Risk Score</span>
           </div>
-          <div className="text-3xl font-bold text-white">
-            {(projects.reduce((sum, p) => sum + (p.risk_score || 0), 0) / projects.length).toFixed(1)}
-          </div>
+          <div className="text-3xl font-bold text-white">{avgRisk}</div>
         </div>
       </div>
 
-      {/* Main Chart Section */}
+      {/* Chart */}
       <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-6 border border-white/10 mb-8">
-        {/* Chart Controls */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-4">
             <select
               value={selectedProject?.id || ''}
-              onChange={(e) => {
-                const project = projects.find(p => p.id === parseInt(e.target.value));
-                setSelectedProject(project);
-              }}
-              className="bg-[#0a0e14] border border-white/20 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent appearance-none cursor-pointer hover:border-white/30 transition-colors"
+              onChange={(e) => setSelectedProject(projects.find(p => p.id === parseInt(e.target.value)))}
+              className="bg-[#0a0e14] border border-white/20 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 appearance-none cursor-pointer"
               style={{
                 backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='white'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E")`,
-                backgroundRepeat: 'no-repeat',
-                backgroundPosition: 'right 0.5rem center',
-                backgroundSize: '1.5em 1.5em',
-                paddingRight: '2.5rem'
+                backgroundRepeat: 'no-repeat', backgroundPosition: 'right 0.5rem center', backgroundSize: '1.5em 1.5em', paddingRight: '2.5rem'
               }}
             >
               {projects.map(p => (
-                <option key={p.id} value={p.id} className="bg-[#0a0e14] text-white">
-                  {p.name}
-                </option>
+                <option key={p.id} value={p.id} className="bg-[#0a0e14] text-white">{p.name}</option>
               ))}
             </select>
-
             <select
               value={timeframe}
               onChange={(e) => setTimeframe(parseInt(e.target.value))}
-              className="bg-[#0a0e14] border border-white/20 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent appearance-none cursor-pointer hover:border-white/30 transition-colors"
+              className="bg-[#0a0e14] border border-white/20 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 appearance-none cursor-pointer"
               style={{
                 backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='white'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E")`,
-                backgroundRepeat: 'no-repeat',
-                backgroundPosition: 'right 0.5rem center',
-                backgroundSize: '1.5em 1.5em',
-                paddingRight: '2.5rem'
+                backgroundRepeat: 'no-repeat', backgroundPosition: 'right 0.5rem center', backgroundSize: '1.5em 1.5em', paddingRight: '2.5rem'
               }}
             >
               <option value={7} className="bg-[#0a0e14] text-white">7 days</option>
@@ -196,105 +157,78 @@ export default function TVLAnalytics() {
               <option value={90} className="bg-[#0a0e14] text-white">90 days</option>
             </select>
           </div>
-
           {selectedProject && (
             <div className="text-right">
               <div className="text-sm text-white/60">Current TVL</div>
-              <div className="text-2xl font-bold text-white">
-                {formatTVL(selectedProject.total_value_locked)}
-              </div>
+              <div className="text-2xl font-bold text-white">{formatTVL(selectedProject.total_value_locked)}</div>
             </div>
           )}
         </div>
 
-        {/* TVL Chart */}
         <div className="h-80">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={historyData}>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-              <XAxis 
-                dataKey="date" 
-                stroke="rgba(255,255,255,0.4)"
-                style={{ fontSize: '12px' }}
-              />
-              <YAxis 
-                stroke="rgba(255,255,255,0.4)"
-                style={{ fontSize: '12px' }}
-                tickFormatter={(value) => `$${value.toFixed(0)}M`}
-              />
+              <XAxis dataKey="date" stroke="rgba(255,255,255,0.4)" style={{ fontSize: '12px' }} />
+              <YAxis stroke="rgba(255,255,255,0.4)" style={{ fontSize: '12px' }} tickFormatter={(v) => `$${v.toFixed(0)}M`} />
               <Tooltip
-                contentStyle={{
-                  backgroundColor: 'rgba(0,0,0,0.9)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  borderRadius: '8px',
-                  color: '#fff'
-                }}
-                formatter={(value) => [`$${value.toFixed(2)}M`, 'TVL']}
+                contentStyle={{ backgroundColor: 'rgba(0,0,0,0.9)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', color: '#fff' }}
+                formatter={(v) => [`$${v.toFixed(2)}M`, 'TVL']}
               />
-              <Line 
-                type="monotone" 
-                dataKey="tvl" 
-                stroke="#818cf8" 
-                strokeWidth={2}
-                dot={{ fill: '#818cf8', r: 3 }}
-                activeDot={{ r: 5 }}
-              />
+              <Line type="monotone" dataKey="tvl" stroke="#818cf8" strokeWidth={2} dot={{ fill: '#818cf8', r: 3 }} activeDot={{ r: 5 }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      {/* Protocol List with Changes */}
+      {/* Protocol Performance — now shows real signals */}
       <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-6 border border-white/10">
-        <h2 className="text-xl font-bold text-white mb-4">Protocol Performance (Last 7 Days)</h2>
-        
+        <h2 className="text-xl font-bold text-white mb-4">Protocol Performance</h2>
         <div className="space-y-3">
-          {projects.map(project => {
-            const trend = trends.find(t => t.project_id === project.id);
-            const changePercent = trend?.risk_change_percent || 0;
-            
-            return (
-              <div
-                key={project.id}
-                className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/10 hover:bg-white/10 transition-all cursor-pointer"
-                onClick={() => setSelectedProject(project)}
-              >
-                <div className="flex items-center gap-4">
-                  <div>
-                    <div className="text-white font-medium">{project.name}</div>
-                    <div className="text-sm text-white/60">{project.protocol_type}</div>
-                  </div>
+          {projects.map(project => (
+            <div
+              key={project.id}
+              className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/10 hover:bg-white/10 transition-all cursor-pointer"
+              onClick={() => setSelectedProject(project)}
+            >
+              <div className="flex-1 min-w-0">
+                <div className="text-white font-medium">{project.name}</div>
+                <div className="text-sm text-white/60">{project.protocol_type}</div>
+              </div>
+
+              <div className="flex items-center gap-6">
+                <div className="text-right">
+                  <div className="text-white font-medium">{formatTVL(project.total_value_locked)}</div>
+                  <div className="text-xs text-white/60">TVL</div>
                 </div>
 
-                <div className="flex items-center gap-6">
-                  <div className="text-right">
-                    <div className="text-white font-medium">
-                      {formatTVL(project.total_value_locked)}
-                    </div>
-                    <div className="text-xs text-white/60">TVL</div>
+                {/* Real 7d TVL change */}
+                <div className="text-right min-w-[80px]">
+                  <div className={`flex items-center gap-1 justify-end font-medium ${changeColor(project.change_7d ?? 0)}`}>
+                    {(project.change_7d ?? 0) >= 0
+                      ? <TrendingUp className="w-4 h-4" />
+                      : <TrendingDown className="w-4 h-4" />}
+                    {fmtPct(project.change_7d)}
                   </div>
+                  <div className="text-xs text-white/60">7d TVL</div>
+                </div>
 
-                  <div className={`flex items-center gap-2 ${getTrendColor(changePercent)}`}>
-                    {getTrendIcon(changePercent)}
-                    <span className="font-medium">
-                      {changePercent > 0 ? '+' : ''}{changePercent.toFixed(2)}%
-                    </span>
-                  </div>
+                {/* Volatility */}
+                <div className="text-right min-w-[70px] hidden sm:block">
+                  <div className="text-white font-medium">{project.tvl_volatility?.toFixed(1) ?? '—'}%</div>
+                  <div className="text-xs text-white/60">Volatility</div>
+                </div>
 
-                  <div className="text-right">
-                    <div className="text-white text-sm">Risk: {project.risk_score.toFixed(1)}</div>
-                    <div className={`text-xs px-2 py-1 rounded ${
-                      project.risk_level === 'Low' ? 'bg-green-500/20 text-green-400' :
-                      project.risk_level === 'Medium' ? 'bg-yellow-500/20 text-yellow-400' :
-                      'bg-red-500/20 text-red-400'
-                    }`}>
-                      {project.risk_level}
-                    </div>
+                {/* Risk */}
+                <div className="text-right">
+                  <div className="text-white text-sm">Risk: {project.risk_score?.toFixed(1)}</div>
+                  <div className={`text-xs px-2 py-1 rounded mt-0.5 ${getRiskBadge(project.risk_level)}`}>
+                    {project.risk_level}
                   </div>
                 </div>
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
       </div>
     </div>

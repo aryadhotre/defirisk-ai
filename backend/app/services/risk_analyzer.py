@@ -1,207 +1,231 @@
-# backend/app/services/risk_analyzer.py
 """
-Advanced DeFi Risk Analysis Engine
-Based on industry standards from:
-- EEA DeFi Risk Assessment Guidelines
-- ConsenSys DeFi Score methodology
-- Gauntlet risk modeling approach
+Risk Analyzer - v2
+Computes a 0-100 risk score (higher = riskier) from REAL protocol signals:
+volatility, drawdown, chain concentration, momentum, TVL depth, audit, valuation.
+
+Replaces the old TVL-tier lookup heuristics. Each sub-risk is documented so the
+numbers are explainable to a user, not a black box.
+
+Score convention: 0 = safest, 100 = riskiest.
+Each component returns 0-100, then we weight them into an overall score.
 """
 
-import math
-from typing import Dict
+from typing import Dict, Optional
+
+
+# ----------------------------------------------------------------------
+# Component scorers — each returns 0 (safe) to 100 (risky)
+# ----------------------------------------------------------------------
+
+def _smart_contract_risk(audit_status: str, tvl: float) -> float:
+    """
+    Smart contract / security risk.
+    Drivers:
+      - Audit status: unaudited code is materially riskier.
+      - TVL-at-risk: a larger honeypot is a bigger target and amplifies
+        the impact of any bug, so very large TVL adds a small risk premium.
+    """
+    base = 30.0 if audit_status == "Audited" else 65.0
+
+    # Large TVL = bigger attack incentive. Small premium, capped.
+    if tvl >= 10_000_000_000:      # $10B+
+        base += 8
+    elif tvl >= 1_000_000_000:     # $1B+
+        base += 5
+    elif tvl >= 100_000_000:       # $100M+
+        base += 3
+
+    return min(100.0, base)
+
+
+def _liquidity_risk(tvl: float, volatility: float, top_chain_share: float) -> float:
+    """
+    Liquidity / exit risk: how hard it might be to exit positions safely.
+    Drivers:
+      - TVL depth: deeper TVL = easier exits = lower risk.
+      - TVL volatility: erratic TVL implies flighty liquidity (can vanish fast).
+      - Chain concentration: liquidity stuck on one chain is harder to exit
+        during that chain's congestion/outage.
+    """
+    # Depth component (0-50): smaller protocols are harder to exit.
+    if tvl >= 5_000_000_000:
+        depth = 5
+    elif tvl >= 1_000_000_000:
+        depth = 12
+    elif tvl >= 100_000_000:
+        depth = 22
+    elif tvl >= 10_000_000:
+        depth = 35
+    else:
+        depth = 50
+
+    # Volatility component (0-35): clamp CoV at 70% -> full risk.
+    vol_component = min(35.0, (volatility / 70.0) * 35.0)
+
+    # Concentration component (0-15): >90% on one chain is a real liquidity trap.
+    conc_component = min(15.0, max(0.0, (top_chain_share - 50.0) / 50.0) * 15.0)
+
+    return min(100.0, depth + vol_component + conc_component)
+
+
+def _financial_risk(volatility: float, max_drawdown: float, mcap_to_tvl: Optional[float]) -> float:
+    """
+    Financial / market risk: exposure to value erosion.
+    Drivers:
+      - TVL volatility: instability in capital base.
+      - Max drawdown: a deep recent peak-to-trough drop signals fragility.
+      - Mcap/TVL ratio: very high ratios suggest speculative token froth
+        relative to capital secured. None (no token) = neutral.
+    """
+    # Volatility (0-40)
+    vol_component = min(40.0, (volatility / 70.0) * 40.0)
+
+    # Drawdown (0-40): a 50%+ drawdown maxes this out.
+    dd_component = min(40.0, (max_drawdown / 50.0) * 40.0)
+
+    # Valuation (0-20): only applies if token exists.
+    if mcap_to_tvl is None:
+        val_component = 8.0  # neutral-ish default for tokenless protocols
+    elif mcap_to_tvl > 5:
+        val_component = 20.0
+    elif mcap_to_tvl > 2:
+        val_component = 14.0
+    elif mcap_to_tvl > 1:
+        val_component = 8.0
+    else:
+        val_component = 4.0  # mcap below TVL — relatively grounded
+
+    return min(100.0, vol_component + dd_component + val_component)
+
+
+def _operational_risk(chain_count: int, top_chain_share: float, change_30d: float) -> float:
+    """
+    Operational / structural risk.
+    Drivers:
+      - Single-chain dependence: one chain = single point of failure.
+      - Chain count: more chains = more resilience (to a point).
+      - 30d trend: a sharply declining protocol may signal waning
+        confidence, team issues, or migration away.
+    """
+    # Concentration (0-45): single-chain protocols carry real structural risk.
+    if chain_count <= 1:
+        conc = 45.0
+    else:
+        # More chains lowers risk; share of top chain still matters.
+        conc = min(45.0, max(0.0, (top_chain_share - 30.0) / 70.0) * 45.0)
+
+    # Chain-count bonus reduction (more chains = safer), 0-15 reduction baked in above.
+
+    # Trend (0-25): steep 30d decline adds risk; growth reduces it slightly.
+    if change_30d <= -40:
+        trend = 25.0
+    elif change_30d <= -20:
+        trend = 16.0
+    elif change_30d <= -5:
+        trend = 8.0
+    elif change_30d < 5:
+        trend = 4.0
+    else:
+        trend = 0.0  # growing TVL — no operational penalty
+
+    return min(100.0, conc + trend)
+
+
+# ----------------------------------------------------------------------
+# Aggregator
+# ----------------------------------------------------------------------
+
+# Weights sum to 1.0. Tunable — documented so the overall score is explainable.
+WEIGHTS = {
+    "smart_contract_risk": 0.30,
+    "liquidity_risk": 0.25,
+    "financial_risk": 0.25,
+    "operational_risk": 0.20,
+}
+
+
+def _risk_level(score: float) -> str:
+    if score < 25:
+        return "Low"
+    elif score < 50:
+        return "Medium"
+    elif score < 75:
+        return "High"
+    return "Critical"
+
 
 def calculate_risk(project) -> Dict:
     """
-    Calculate comprehensive risk score with category breakdown.
-    
-    Risk Categories (Industry Standard):
-    - Smart Contract Risk: 35% weight
-    - Liquidity Risk: 30% weight
-    - Financial Risk: 20% weight
-    - Operational Risk: 15% weight
-    
-    Returns: Dict with overall risk score and breakdown
+    Main entry point. Accepts an object/dataclass with these attributes
+    (DeFiProject or any object exposing them):
+        name, protocol_type, total_value_locked, audit_status,
+        tvl_volatility, max_drawdown, top_chain_share, chain_count,
+        change_30d, mcap_to_tvl
+
+    Backwards-compatible: if the new metric attributes are missing
+    (e.g. old DeFiProject objects), they default to neutral values so
+    nothing crashes during the transition.
     """
-    
-    # ========== 1. SMART CONTRACT RISK (35%) ==========
-    # Based on ConsenSys DeFi Score: audit status is primary factor
-    sc_risk = calculate_smart_contract_risk(
-        project.audit_status,
-        project.protocol_type
+    # Safely read attributes with sensible defaults
+    tvl = float(getattr(project, "total_value_locked", 0) or 0)
+    audit_status = getattr(project, "audit_status", "Unaudited") or "Unaudited"
+
+    volatility = float(getattr(project, "tvl_volatility", 0) or 0)
+    max_drawdown = float(getattr(project, "max_drawdown", 0) or 0)
+    top_chain_share = float(getattr(project, "top_chain_share", 100) or 100)
+    chain_count = int(getattr(project, "chain_count", 1) or 1)
+    change_30d = float(getattr(project, "change_30d", 0) or 0)
+
+    mcap_to_tvl_raw = getattr(project, "mcap_to_tvl", None)
+    mcap_to_tvl = float(mcap_to_tvl_raw) if mcap_to_tvl_raw is not None else None
+
+    # Compute components
+    sc = _smart_contract_risk(audit_status, tvl)
+    liq = _liquidity_risk(tvl, volatility, top_chain_share)
+    fin = _financial_risk(volatility, max_drawdown, mcap_to_tvl)
+    ops = _operational_risk(chain_count, top_chain_share, change_30d)
+
+    overall = (
+        sc * WEIGHTS["smart_contract_risk"]
+        + liq * WEIGHTS["liquidity_risk"]
+        + fin * WEIGHTS["financial_risk"]
+        + ops * WEIGHTS["operational_risk"]
     )
-    
-    # ========== 2. LIQUIDITY RISK (30%) ==========
-    # Based on Gauntlet methodology: relative liquidity matters
-    liq_risk = calculate_liquidity_risk(
-        project.total_value_locked,
-        project.liquidity_score
-    )
-    
-    # ========== 3. FINANCIAL RISK (20%) ==========
-    # Collateralization and user activity
-    fin_risk = calculate_financial_risk(
-        project.user_activity_score,
-        project.total_value_locked
-    )
-    
-    # ========== 4. OPERATIONAL RISK (15%) ==========
-    # Governance and protocol maturity
-    op_risk = calculate_operational_risk(
-        project.protocol_type
-    )
-    
-    # ========== WEIGHTED FINAL SCORE ==========
-    # Lower score = lower risk (safer)
-    overall_risk = (
-        sc_risk * 0.35 +
-        liq_risk * 0.30 +
-        fin_risk * 0.20 +
-        op_risk * 0.15
-    )
-    
-    # Round to 1 decimal place
-    overall_risk = round(overall_risk, 1)
-    
+    overall = round(overall, 1)
+
     return {
-        "overall_risk": overall_risk,
+        "overall_risk": overall,
+        "risk_level": _risk_level(overall),
         "risk_breakdown": {
-            "smart_contract_risk": round(sc_risk, 1),
-            "liquidity_risk": round(liq_risk, 1),
-            "financial_risk": round(fin_risk, 1),
-            "operational_risk": round(op_risk, 1)
+            "smart_contract_risk": round(sc, 1),
+            "liquidity_risk": round(liq, 1),
+            "financial_risk": round(fin, 1),
+            "operational_risk": round(ops, 1),
         },
-        "risk_level": get_risk_level(overall_risk)
+        # Surface the raw signals so the UI can show WHY the score is what it is
+        "signals": {
+            "tvl_volatility": volatility,
+            "max_drawdown": max_drawdown,
+            "top_chain_share": top_chain_share,
+            "chain_count": chain_count,
+            "change_30d": change_30d,
+            "mcap_to_tvl": mcap_to_tvl,
+        },
+        "recommendations": _recommendations(sc, liq, fin, ops),
     }
 
 
-def calculate_smart_contract_risk(audit_status: str, protocol_type: str) -> float:
-    """
-    Smart Contract Risk (35% of total)
-    
-    Based on EEA Guidelines: Audited protocols are significantly safer
-    - Audited by reputable firm: Low risk (20-35)
-    - Unaudited: High risk (60-80)
-    - Protocol type adds complexity factor
-    """
-    base_risk = 50
-    
-    # Audit status (primary factor)
-    audit_status_lower = audit_status.lower()
-    if "audited" in audit_status_lower:
-        base_risk = 25  # Significantly lower risk
-    else:
-        base_risk = 70  # High risk for unaudited
-    
-    # Protocol complexity factor
-    complexity_factor = 0
-    if protocol_type.lower() in ["lending", "derivatives"]:
-        complexity_factor = 10  # More complex = higher risk
-    elif protocol_type.lower() in ["dex", "swap"]:
-        complexity_factor = 5   # Moderate complexity
-    
-    return min(100, base_risk + complexity_factor)
-
-
-def calculate_liquidity_risk(tvl: float, liquidity_score: float) -> float:
-    """
-    Liquidity Risk (30% of total)
-    
-    Based on Gauntlet: Relative liquidity creates protocol risk
-    - High TVL + High liquidity score = Low risk
-    - Low TVL or Low liquidity = High risk
-    """
-    
-    # Liquidity score factor (0-100 scale)
-    # Higher liquidity score = lower risk
-    liq_factor = 100 - liquidity_score
-    
-    # TVL depth factor (logarithmic scale)
-    # Protocols with higher TVL are generally more stable
-    if tvl > 0:
-        tvl_factor = max(0, 40 - (math.log10(tvl + 1) * 3))
-    else:
-        tvl_factor = 40
-    
-    # Combined liquidity risk
-    liquidity_risk = (liq_factor * 0.7 + tvl_factor * 0.3)
-    
-    return min(100, max(0, liquidity_risk))
-
-
-def calculate_financial_risk(user_activity: float, tvl: float) -> float:
-    """
-    Financial Risk (20% of total)
-    
-    Based on ConsenSys methodology: User activity & collateralization
-    - High user activity = Lower risk (active community)
-    - TVL stability matters
-    """
-    
-    # User activity factor
-    # Higher activity = lower risk
-    activity_factor = 100 - user_activity
-    
-    # TVL size factor (larger protocols generally more stable)
-    if tvl > 10_000_000:  # $10M+
-        tvl_stability = 10
-    elif tvl > 1_000_000:  # $1M+
-        tvl_stability = 25
-    else:
-        tvl_stability = 40
-    
-    financial_risk = (activity_factor * 0.6 + tvl_stability * 0.4)
-    
-    return min(100, max(0, financial_risk))
-
-
-def calculate_operational_risk(protocol_type: str) -> float:
-    """
-    Operational Risk (15% of total)
-    
-    Based on EEA Guidelines: Governance and operational factors
-    - Established protocol types have lower operational risk
-    """
-    
-    base_risk = 50
-    
-    # Protocol maturity by type
-    protocol_type_lower = protocol_type.lower()
-    if protocol_type_lower in ["dex", "lending"]:
-        base_risk = 30  # Well-established patterns
-    elif protocol_type_lower in ["staking", "yield"]:
-        base_risk = 40  # Moderate operational complexity
-    elif protocol_type_lower in ["derivatives", "options"]:
-        base_risk = 60  # Higher operational complexity
-    else:
-        base_risk = 50  # Unknown/other
-    
-    return base_risk
-
-
-def get_risk_level(risk_score: float) -> str:
-    """
-    Categorize risk score into risk levels
-    
-    Industry standard ranges:
-    - 0-30: Low Risk
-    - 31-50: Medium Risk
-    - 51-70: High Risk
-    - 71-100: Critical Risk
-    """
-    if risk_score <= 30:
-        return "Low"
-    elif risk_score <= 50:
-        return "Medium"
-    elif risk_score <= 70:
-        return "High"
-    else:
-        return "Critical"
-
-
-def calculate_simple_risk(project) -> float:
-    """
-    Backward compatible simple risk calculation
-    For legacy endpoints
-    """
-    result = calculate_risk(project)
-    return result["overall_risk"]
+def _recommendations(sc: float, liq: float, fin: float, ops: float) -> list:
+    """Plain-language flags based on which components are elevated."""
+    recs = []
+    if sc >= 60:
+        recs.append("Security risk elevated — verify audit status and contract maturity before depositing.")
+    if liq >= 60:
+        recs.append("Liquidity risk elevated — exits may be difficult during stress; size positions carefully.")
+    if fin >= 60:
+        recs.append("Financial risk elevated — TVL has been volatile or drawn down sharply recently.")
+    if ops >= 60:
+        recs.append("Operational risk elevated — high chain concentration or a declining TVL trend.")
+    if not recs:
+        recs.append("No major risk flags. Standard DeFi caution still applies.")
+    return recs

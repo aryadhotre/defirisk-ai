@@ -14,6 +14,9 @@ import NoiseTexture from "./components/NoiseTexture";
 import "./index.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "https://defirisk-ai-backend.onrender.com";
+console.log("🔍 RAW ENV VALUE:", import.meta.env.VITE_API_BASE);
+console.log("🔍 FINAL API_BASE:", API_BASE);
+console.log("🔍 ALL ENV:", import.meta.env);
 
 function AppContent() {
   const location = useLocation();
@@ -29,6 +32,7 @@ function AppContent() {
     audit_status: "Audited",
     liquidity_score: "",
     user_activity_score: "",
+    slug: "", 
   });
 
   const loadProjects = async () => {
@@ -80,6 +84,7 @@ function AppContent() {
         audit_status: "Audited",
         liquidity_score: "",
         user_activity_score: "",
+        slug: "",
       });
     } catch (err) {
       console.error("Error submitting form:", err);
