@@ -2,9 +2,18 @@
 import { motion } from "framer-motion";
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { Search, CheckCircle, ShieldCheck, Layers, Loader2 } from "lucide-react";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "https://defirisk-ai-backend.onrender.com";
 const DEFILLAMA_BASE = `${API_BASE}/defillama`;
+
+const fmtTVL = (value) => {
+  const n = Number(value);
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `$${(n / 1e3).toFixed(2)}K`;
+  return `$${n.toFixed(2)}`;
+};
 
 export default function Risk_Analysis({ form, setForm, submitting, handleSubmit }) {
   const navigate = useNavigate();
@@ -16,7 +25,6 @@ export default function Risk_Analysis({ form, setForm, submitting, handleSubmit 
   const [searching, setSearching] = useState(false);
   const [selectedProtocol, setSelectedProtocol] = useState(null);
 
-  // Search protocols from DeFiLlama
   const searchProtocols = async (query) => {
     if (!query || query.length < 2) {
       setSearchResults([]);
@@ -39,7 +47,6 @@ export default function Risk_Analysis({ form, setForm, submitting, handleSubmit 
     }
   };
 
-  // Debounced search
   useEffect(() => {
     const timer = setTimeout(() => {
       if (searchQuery) searchProtocols(searchQuery);
@@ -47,7 +54,6 @@ export default function Risk_Analysis({ form, setForm, submitting, handleSubmit 
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
-  // Select protocol -> fetch full data -> auto-fill form
   const selectProtocol = async (protocol) => {
     try {
       const url = `${DEFILLAMA_BASE}/protocol/${protocol.slug}`;
@@ -62,10 +68,9 @@ export default function Risk_Analysis({ form, setForm, submitting, handleSubmit 
           protocol_type: data.protocol_type,
           total_value_locked: data.total_value_locked.toString(),
           audit_status: data.audit_status,
-          // kept for payload compatibility; backend ignores these now
           liquidity_score: "0",
           user_activity_score: "0",
-          slug: protocol.slug, // so backend fetches real metrics by slug
+          slug: protocol.slug,
         });
         setSelectedProtocol(data);
         setSearchQuery(data.name);
@@ -84,168 +89,122 @@ export default function Risk_Analysis({ form, setForm, submitting, handleSubmit 
     setTimeout(() => navigate("/dashboard"), 1800);
   };
 
-  const formatTVL = (value) => {
-    const n = Number(value);
-    if (n >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
-    if (n >= 1e6) return `$${(n / 1e6).toFixed(2)}M`;
-    if (n >= 1e3) return `$${(n / 1e3).toFixed(2)}K`;
-    return `$${n.toFixed(2)}`;
-  };
-
   const canSubmit = selectedProtocol && form.name && form.total_value_locked;
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">
-      <motion.div
-        initial={{ opacity: 0, y: 10 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="space-y-2"
-      >
-        <h1 className="text-3xl font-semibold tracking-tight">Risk Analysis</h1>
-        <p className="text-white/60 text-sm">
-          Search a DeFi protocol — we pull live data and compute a risk profile from real on-chain metrics.
-        </p>
+      {/* header */}
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+        <div className="label mb-3"><span className="live-dot mr-2" />Analyze</div>
+        <h1 className="font-display text-[clamp(34px,5vw,52px)] leading-none tracking-tight">Risk Analysis</h1>
+        <p className="text-dim text-sm mt-3">Search any DeFi protocol — we pull live data and compute a risk profile from real on-chain metrics.</p>
       </motion.div>
 
       {showSuccess && (
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="p-4 rounded-xl bg-green-500/10 border border-green-500/20 text-green-400"
-        >
-          ✅ Risk analysis complete! Redirecting to dashboard...
+        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
+          className="flex items-center gap-3 p-4 rounded-panel border"
+          style={{ color: "#3FD98B", background: "rgba(63,217,139,.08)", borderColor: "rgba(63,217,139,.25)" }}>
+          <CheckCircle className="w-5 h-5" />
+          <span className="font-mono text-sm tracking-wide">RISK PROFILE COMPUTED — redirecting to dashboard…</span>
         </motion.div>
       )}
 
-      <motion.form
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        onSubmit={onSubmit}
-        className="rounded-2xl bg-white/5 backdrop-blur-xl border border-white/10 p-8 space-y-6"
-      >
-        {/* Protocol Search */}
-        <div className="relative">
-          <label className="text-xs font-medium text-white/50">Search Protocol</label>
-          <div className="relative mt-1">
-            <input
-              type="text"
-              placeholder="Type to search (e.g., Uniswap, Aave, GMX)..."
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                if (selectedProtocol) setSelectedProtocol(null);
-              }}
-              onFocus={() => searchQuery && searchResults.length > 0 && setShowDropdown(true)}
-              className="w-full rounded-xl px-4 py-3 bg-black/40 border border-white/10
-                         focus:border-indigo-400/40 outline-none transition-all pr-10"
-            />
-            {searching && (
-              <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                <div className="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-              </div>
+      {/* search panel */}
+      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="relative">
+        <div className="pointer-events-none absolute -inset-8 -z-0 opacity-60">
+          <div className="absolute right-4 top-0 w-72 h-44 blur-[90px]" style={{ background: "radial-gradient(circle,#FF4D8D,transparent 70%)" }} />
+          <div className="absolute left-10 bottom-0 w-60 h-36 blur-[90px]" style={{ background: "radial-gradient(circle,#FFB23D,transparent 72%)" }} />
+        </div>
+
+        <form onSubmit={onSubmit} className="panel relative z-10 p-8 space-y-6">
+          <i className="corner tl" /><i className="corner tr" /><i className="corner bl" /><i className="corner br" />
+
+          <div className="relative">
+            <label className="label" style={{ fontSize: 10 }}>Search Protocol</label>
+            <div className="relative mt-2">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-faint" />
+              <input
+                type="text"
+                placeholder="Type to search (e.g. Uniswap, Aave, GMX)…"
+                value={searchQuery}
+                onChange={(e) => { setSearchQuery(e.target.value); if (selectedProtocol) setSelectedProtocol(null); }}
+                onFocus={() => searchQuery && searchResults.length > 0 && setShowDropdown(true)}
+                className="w-full rounded-xl pl-11 pr-11 py-3.5 bg-canvas/60 border border-line text-ink placeholder:text-faint font-mono text-sm outline-none transition-colors focus:border-[#FFB23D]/50"
+              />
+              {searching && <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin" style={{ color: "#46E3C2" }} />}
+            </div>
+
+            {showDropdown && searchResults.length > 0 && (
+              <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}
+                className="absolute z-50 w-full mt-2 rounded-xl border border-line-strong overflow-hidden max-h-80 overflow-y-auto"
+                style={{ background: "#0E1116", boxShadow: "0 24px 60px -24px rgba(0,0,0,.9)" }}>
+                {searchResults.map((protocol, i) => (
+                  <button key={i} type="button" onClick={() => selectProtocol(protocol)}
+                    className="w-full px-4 py-3 text-left transition-colors border-b border-line last:border-0 flex items-center gap-3 hover:bg-white/[0.04]">
+                    {protocol.logo && <img src={protocol.logo} alt={protocol.name} className="w-8 h-8 rounded-full" />}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-ink font-medium truncate">{protocol.name}</div>
+                      <div className="font-mono text-faint" style={{ fontSize: 11 }}>{protocol.category} · {fmtTVL(protocol.tvl)}</div>
+                    </div>
+                    <span className="font-mono text-faint" style={{ fontSize: 12 }}>→</span>
+                  </button>
+                ))}
+              </motion.div>
             )}
           </div>
 
-          {showDropdown && searchResults.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="absolute z-50 w-full mt-2 rounded-xl bg-[#0a0e14] border border-white/10
-                         shadow-xl max-h-80 overflow-y-auto"
-            >
-              {searchResults.map((protocol, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => selectProtocol(protocol)}
-                  className="w-full px-4 py-3 text-left hover:bg-white/5 transition-all
-                             border-b border-white/5 last:border-0 flex items-center gap-3"
-                >
-                  {protocol.logo && (
-                    <img src={protocol.logo} alt={protocol.name} className="w-8 h-8 rounded-full" />
-                  )}
-                  <div className="flex-1">
-                    <div className="font-medium text-white">{protocol.name}</div>
-                    <div className="text-xs text-white/50">
-                      {protocol.category} • TVL: ${(protocol.tvl / 1e6).toFixed(1)}M
+          {selectedProtocol && (
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+              className="rounded-xl border border-line bg-panel-2/60 p-5 space-y-4">
+              <div className="flex items-center gap-3">
+                {selectedProtocol.logo && <img src={selectedProtocol.logo} alt={selectedProtocol.name} className="w-10 h-10 rounded-full" />}
+                <div>
+                  <div className="font-display text-xl text-ink leading-none">{selectedProtocol.name}</div>
+                  <div className="label mt-1.5" style={{ fontSize: 10 }}>{selectedProtocol.protocol_type}</div>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4 pt-1">
+                <div>
+                  <div className="label" style={{ fontSize: 10 }}>Total Value Locked</div>
+                  <div className="stat-num text-lg mt-1">{fmtTVL(form.total_value_locked)}</div>
+                </div>
+                <div>
+                  <div className="label" style={{ fontSize: 10 }}>Audit Status</div>
+                  <div className="stat-num text-lg mt-1 flex items-center gap-1.5" style={{ color: form.audit_status === "Audited" ? "#3FD98B" : "#FF8350" }}>
+                    <ShieldCheck className="w-4 h-4" />{form.audit_status}
+                  </div>
+                </div>
+                {selectedProtocol.chains && (
+                  <div className="col-span-2">
+                    <div className="label flex items-center gap-1.5" style={{ fontSize: 10 }}><Layers className="w-3.5 h-3.5" />Chains</div>
+                    <div className="text-dim text-xs mt-1 font-mono">
+                      {selectedProtocol.chains.slice(0, 6).join(", ")}{selectedProtocol.chains.length > 6 ? ` +${selectedProtocol.chains.length - 6}` : ""}
                     </div>
                   </div>
-                </button>
-              ))}
+                )}
+              </div>
+              <p className="text-faint text-xs">Risk will be computed live from volatility, drawdown, chain concentration, and momentum.</p>
             </motion.div>
           )}
-        </div>
 
-        {/* Selected protocol preview (read-only, auto-filled) */}
-        {selectedProtocol && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="rounded-xl bg-black/30 border border-white/10 p-5 space-y-3"
-          >
-            <div className="flex items-center gap-3">
-              {selectedProtocol.logo && (
-                <img src={selectedProtocol.logo} alt={selectedProtocol.name} className="w-10 h-10 rounded-full" />
-              )}
-              <div>
-                <div className="font-semibold text-white">{selectedProtocol.name}</div>
-                <div className="text-xs text-white/50">{selectedProtocol.protocol_type}</div>
-              </div>
-            </div>
+          <button type="submit" disabled={submitting || !canSubmit}
+            className="btn btn-primary w-full justify-center py-3.5 disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none">
+            {submitting ? "Analyzing…" : selectedProtocol ? "Analyze Risk →" : "Select a protocol first"}
+          </button>
+        </form>
+      </motion.div>
 
-            <div className="grid grid-cols-2 gap-3 text-sm pt-2">
-              <div className="flex flex-col">
-                <span className="text-white/40 text-xs">Total Value Locked</span>
-                <span className="text-white font-medium">{formatTVL(form.total_value_locked)}</span>
-              </div>
-              <div className="flex flex-col">
-                <span className="text-white/40 text-xs">Audit Status</span>
-                <span className={`font-medium ${
-                  form.audit_status === "Audited" ? "text-green-400" : "text-orange-400"
-                }`}>
-                  {form.audit_status}
-                </span>
-              </div>
-              {selectedProtocol.chains && (
-                <div className="flex flex-col col-span-2">
-                  <span className="text-white/40 text-xs">Chains</span>
-                  <span className="text-white/80 text-xs">
-                    {selectedProtocol.chains.slice(0, 6).join(", ")}
-                    {selectedProtocol.chains.length > 6 ? ` +${selectedProtocol.chains.length - 6} more` : ""}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            <p className="text-xs text-white/40 pt-1">
-              Risk will be computed from live volatility, drawdown, chain concentration, and momentum.
-            </p>
-          </motion.div>
-        )}
-
-        {/* Submit */}
-        <button
-          type="submit"
-          disabled={submitting || !canSubmit}
-          className="w-full py-3 rounded-xl bg-gradient-to-r from-indigo-500 to-fuchsia-500
-                     font-semibold transition-all duration-200 hover:shadow-lg
-                     hover:shadow-indigo-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          {submitting ? "Analyzing..." : selectedProtocol ? "Analyze Risk →" : "Select a protocol first"}
-        </button>
-      </motion.form>
-
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        className="rounded-xl bg-indigo-500/5 border border-indigo-500/10 p-5 space-y-2"
-      >
-        <h3 className="text-sm font-semibold text-indigo-400">🚀 Powered by DeFiLlama</h3>
-        <p className="text-xs text-white/60 leading-relaxed">
-          Live data from 6000+ DeFi protocols across 80+ blockchains. Risk scores are computed
-          from real TVL volatility, peak-to-trough drawdown, chain concentration, and momentum —
-          not manual estimates.
+      {/* info */}
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="panel p-6">
+        <div className="mb-3"><span className="text-heat font-mono font-bold" style={{ fontSize: 12, letterSpacing: ".08em" }}>POWERED BY DEFILLAMA</span></div>
+        <p className="text-dim text-[13px] leading-relaxed mb-4">
+          Live data from 6,000+ DeFi protocols across 80+ blockchains. Risk scores are computed from real TVL volatility, peak-to-trough drawdown, chain concentration, and momentum — not manual estimates.
         </p>
+        <div className="flex flex-wrap gap-2">
+          {["Volatility", "Drawdown", "Concentration", "Momentum"].map((d) => (
+            <span key={d} className="font-mono uppercase rounded-md border border-line text-dim px-2.5 py-1" style={{ fontSize: 10, letterSpacing: ".1em" }}>{d}</span>
+          ))}
+        </div>
       </motion.div>
     </div>
   );

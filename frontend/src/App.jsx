@@ -10,13 +10,11 @@ import SavedProjects from "./pages/SavedProjects";
 import Analytics from "./pages/Analytics";
 
 import Navbar from "./components/Navbar";
+import AppShell from "./components/AppShell";
 import NoiseTexture from "./components/NoiseTexture";
 import "./index.css";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "https://defirisk-ai-backend.onrender.com";
-console.log("🔍 RAW ENV VALUE:", import.meta.env.VITE_API_BASE);
-console.log("🔍 FINAL API_BASE:", API_BASE);
-console.log("🔍 ALL ENV:", import.meta.env);
 
 function AppContent() {
   const location = useLocation();
@@ -32,7 +30,7 @@ function AppContent() {
     audit_status: "Audited",
     liquidity_score: "",
     user_activity_score: "",
-    slug: "", 
+    slug: "",
   });
 
   const loadProjects = async () => {
@@ -102,7 +100,6 @@ function AppContent() {
       Math.round(
         (projects.reduce((s, p) => s + Number(p.risk_score || 0), 0) / count) * 10
       ) / 10;
-
     const tvl = Math.round(
       projects.reduce((s, p) => s + Number(p.total_value_locked || 0), 0)
     );
@@ -112,19 +109,24 @@ function AppContent() {
 
   return (
     <>
-      {/* Simple gradient background (Linear-style) */}
-      <div className="fixed inset-0 -z-20 bg-[#0a0e14]">
-        <div className="absolute top-0 left-1/4 w-96 h-96 bg-indigo-500/10 rounded-full blur-[120px]" />
-        <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-fuchsia-500/8 rounded-full blur-[140px]" />
+      {/* persistent ambient background — heat glows on near-black */}
+      <div className="fixed inset-0 -z-20 bg-canvas overflow-hidden">
+        <div
+          className="absolute -top-40 right-[10%] h-[30rem] w-[30rem] rounded-full blur-[140px]"
+          style={{ background: "radial-gradient(circle, rgba(255,77,141,.10), transparent 70%)" }}
+        />
+        <div
+          className="absolute -bottom-40 left-[8%] h-[28rem] w-[28rem] rounded-full blur-[150px]"
+          style={{ background: "radial-gradient(circle, rgba(255,131,80,.08), transparent 72%)" }}
+        />
       </div>
-
-      {/* Subtle noise texture */}
+      <div className="app-grid" />
       <NoiseTexture opacity={0.025} />
 
-      {/* Navbar */}
+      {/* persistent nav (outside the transition so it never flashes) */}
       <Navbar />
 
-      {/* Page transitions */}
+      {/* animated page transitions */}
       <AnimatePresence mode="wait">
         <motion.div
           key={location.pathname}
@@ -132,32 +134,21 @@ function AppContent() {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2, ease: "easeInOut" }}
-          className="min-h-screen text-white"
+          className="min-h-screen"
         >
-          <div className="pt-28 pb-20 max-w-6xl mx-auto px-6 w-full">
-            <Routes location={location} key={location.pathname}>
-              <Route
-                path="/"
-                element={
-                  <Landing
-                    projects={projects}
-                    kpis={kpis}
-                    loadingList={loadingList}
-                  />
-                }
-              />
+          <Routes location={location} key={location.pathname}>
+            {/* full-bleed showpiece — manages its own width + hero plasma */}
+            <Route
+              path="/"
+              element={<Landing projects={projects} kpis={kpis} loadingList={loadingList} />}
+            />
 
+            {/* app pages share AppShell's centered max-w-7xl main */}
+            <Route element={<AppShell />}>
               <Route
                 path="/dashboard"
-                element={
-                  <Dashboard
-                    projects={projects}
-                    loadingList={loadingList}
-                    kpis={kpis}
-                  />
-                }
+                element={<Dashboard projects={projects} loadingList={loadingList} kpis={kpis} />}
               />
-
               <Route
                 path="/risk"
                 element={
@@ -169,25 +160,20 @@ function AppContent() {
                   />
                 }
               />
-
               <Route path="/saved" element={<SavedProjects />} />
-
-              {/* Analytics */}
               <Route path="/analytics" element={<Analytics />} />
-
-              {/* API Docs */}
               <Route
                 path="/docs"
                 element={
                   <iframe
                     src="https://defirisk-ai-backend.onrender.com/docs"
-                    className="w-full h-[80vh] rounded-xl border border-white/10 bg-[#0a0e14]"
+                    className="w-full h-[80vh] rounded-panel border border-line bg-canvas"
                     title="API Docs"
                   />
                 }
               />
-            </Routes>
-          </div>
+            </Route>
+          </Routes>
         </motion.div>
       </AnimatePresence>
     </>
