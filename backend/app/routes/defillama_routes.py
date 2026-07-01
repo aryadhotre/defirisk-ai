@@ -43,12 +43,17 @@ def get_protocol(protocol_slug: str):
     """
     Get detailed protocol data from DeFiLlama
     Returns data formatted for our risk analysis
-    
+
     Example: GET /defillama/protocol/uniswap
+
+    CHANGED: force_fresh=False — this is the dropdown-preview call. It now
+    shares the service's 90s per-protocol cache with /defi/analyze_risk,
+    so clicking a search result and then hitting "Analyze Risk" seconds
+    later reuses the same DeFiLlama fetch instead of paying for it twice.
     """
     try:
-        # Fetch protocol data
-        protocol_data = defillama_service.get_protocol_data(protocol_slug)
+        # Fetch protocol data (cached if fetched recently)
+        protocol_data = defillama_service.get_protocol_data(protocol_slug, force_fresh=False)
         
         if not protocol_data:
             raise HTTPException(status_code=404, detail="Protocol not found")

@@ -1,6 +1,7 @@
 // src/pages/SavedProjects.jsx
 import { useState, useEffect } from "react";
 import { Trash2, AlertCircle, CheckCircle, Trash, TrendingUp, TrendingDown, Activity, Layers } from "lucide-react";
+import { authFetch } from "../lib/api";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "https://defirisk-ai-backend.onrender.com";
 
@@ -48,9 +49,9 @@ export default function SavedProjects() {
   const loadProjects = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${API_BASE}/defi/projects`);
+      const res = await authFetch(`${API_BASE}/defi/projects`);
       const data = await res.json();
-      setProjects(data);
+      setProjects(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error("Error loading projects:", err);
       showNotification("Failed to load protocols", "error");
@@ -62,7 +63,7 @@ export default function SavedProjects() {
   const deleteProject = async (projectId, projectName) => {
     setDeleting(projectId);
     try {
-      const res = await fetch(`${API_BASE}/defi/projects/${projectId}`, { method: "DELETE" });
+      const res = await authFetch(`${API_BASE}/defi/projects/${projectId}`, { method: "DELETE" });
       if (!res.ok) throw new Error("Delete failed");
       await res.json();
       setProjects(projects.filter((p) => p.id !== projectId));
@@ -80,7 +81,7 @@ export default function SavedProjects() {
     setDeleting("all");
     try {
       const projectIds = projects.map((p) => p.id);
-      const res = await fetch(`${API_BASE}/defi/projects/bulk`, {
+      const res = await authFetch(`${API_BASE}/defi/projects/bulk`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ project_ids: projectIds }),

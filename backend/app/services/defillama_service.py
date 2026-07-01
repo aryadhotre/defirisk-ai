@@ -21,6 +21,14 @@ class DeFiLlamaService:
         self._cache_timestamp = 0
         self._cache_ttl = 300  # 5 minutes
 
+        # NEW: per-protocol response cache. The old code re-fetched a
+        # protocol's FULL historical TVL payload from DeFiLlama on every
+        # single call — including twice in a row (dropdown preview, then
+        # Analyze Risk seconds later). This cache means the second call
+        # reuses the first response instead of paying that network cost again.
+        self._protocol_data_cache: Dict[str, tuple] = {}  # slug -> (timestamp, data)
+        self._protocol_cache_ttl = 90  # seconds — long enough to cover preview->analyze
+
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -69,14 +77,34 @@ class DeFiLlamaService:
         return matches[:limit]
 
     def get_protocol_data(self, protocol_slug: str, force_fresh: bool = True) -> Optional[Dict]:
+        """
+        Fetch a single protocol's full data (including historical TVL —
+        a genuinely large payload). Now cached per-slug for `_protocol_cache_ttl`
+        seconds so back-to-back calls (preview, then analyze) reuse one fetch
+        instead of hitting DeFiLlama twice.
+
+        force_fresh=True bypasses the cache entirely and always hits the network
+        (used by the manual /refresh-all endpoint, where staleness is unacceptable).
+        """
+        cache_key = protocol_slug.lower()
+        now = time.time()
+
+        if not force_fresh:
+            cached = self._protocol_data_cache.get(cache_key)
+            if cached and (now - cached[0]) < self._protocol_cache_ttl:
+                logger.info(f"⚡ Cache hit for protocol '{protocol_slug}'")
+                return cached[1]
+
         try:
             response = self.session.get(
                 f"{self.BASE_URL}/protocol/{protocol_slug}",
                 timeout=15,
-                params={'t': int(time.time())} if force_fresh else {}
+                params={'t': int(now)} if force_fresh else {}
             )
             response.raise_for_status()
-            return response.json()
+            data = response.json()
+            self._protocol_data_cache[cache_key] = (now, data)
+            return data
         except requests.exceptions.HTTPError as e:
             logger.error(f"❌ HTTP Error for {protocol_slug}: {e}")
             protocols = self._get_all_protocols()

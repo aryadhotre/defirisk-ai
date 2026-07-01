@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { TrendingUp, TrendingDown, DollarSign, Activity, BarChart3 } from "lucide-react";
+import { authFetch } from "../lib/api";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "https://defirisk-ai-backend.onrender.com";
 
@@ -49,10 +50,11 @@ export default function TVLAnalytics() {
 
   const loadProjects = async () => {
     try {
-      const res = await fetch(`${API_BASE}/defi/projects`);
+      const res = await authFetch(`${API_BASE}/defi/projects`);
       const data = await res.json();
-      setProjects(data);
-      if (data.length > 0) setSelectedProject(data[0]);
+      const list = Array.isArray(data) ? data : [];
+      setProjects(list);
+      if (list.length > 0) setSelectedProject(list[0]);
     } catch (err) {
       console.error("Error loading projects:", err);
     } finally {
@@ -62,7 +64,7 @@ export default function TVLAnalytics() {
 
   const loadTrends = async () => {
     try {
-      const res = await fetch(`${API_BASE}/analytics/trends?days=7`);
+      const res = await authFetch(`${API_BASE}/analytics/trends?days=7`);
       const data = await res.json();
       setTrends(data.trends || []);
     } catch (err) {
@@ -72,9 +74,9 @@ export default function TVLAnalytics() {
 
   const loadHistory = async (projectId) => {
     try {
-      const res = await fetch(`${API_BASE}/analytics/history/${projectId}?days=${timeframe}`);
+      const res = await authFetch(`${API_BASE}/analytics/history/${projectId}?days=${timeframe}`);
       const data = await res.json();
-      const chartData = data.history.map((h) => ({
+      const chartData = (data.history || []).map((h) => ({
         date: new Date(h.timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
         tvl: h.tvl / 1000000,
         fullDate: h.timestamp,

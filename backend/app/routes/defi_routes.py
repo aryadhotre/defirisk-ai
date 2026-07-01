@@ -9,6 +9,8 @@ from app.db import get_db
 from app.models.defi_model import DeFiProject
 from app.models.project_model import ProjectRecord
 from app.models.risk_history_model import RiskHistory
+from app.models.user_model import User
+from app.deps import get_current_user
 from app.services.risk_analyzer import calculate_risk
 from app.services.defillama_service import defillama_service
 
@@ -23,7 +25,6 @@ class RiskAnalysisRequest(BaseModel):
     total_value_locked: float
     audit_status: str
     # Optional now — kept so the existing frontend payload still validates.
-    # No longer used by the risk engine.
     liquidity_score: Optional[float] = 0.0
     user_activity_score: Optional[float] = 0.0
     # Optional slug: if the frontend knows the DeFiLlama slug (from search),
@@ -38,11 +39,10 @@ class BulkDeleteRequest(BaseModel):
 def _fetch_real_metrics(name: str, slug: Optional[str]) -> dict:
     """
     Try to fetch real DeFiLlama metrics for this protocol.
-    Returns the extract_protocol_info dict, or neutral defaults if not found
-    (e.g. manual entry of a protocol not on DeFiLlama).
+    Returns the extract_protocol_info dict, or neutral defaults if not found.
     """
     candidate = slug or name.lower().replace(" ", "-")
-    data = defillama_service.get_protocol_data(candidate, force_fresh=True)
+    data = defillama_service.get_protocol_data(candidate, force_fresh=False)
     if data:
         info = defillama_service.extract_protocol_info(data)
         info["_source"] = "defillama"
@@ -58,16 +58,32 @@ def _fetch_real_metrics(name: str, slug: Optional[str]) -> dict:
 
 
 @router.post("/analyze_risk")
-def analyze_risk(request: RiskAnalysisRequest, db: Session = Depends(get_db)):
+def analyze_risk(
+    request: RiskAnalysisRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """
     Analyze risk for a DeFi protocol using REAL metrics where available.
-    Creates a new project record + initial historical snapshot.
+    Creates a new project record OWNED BY THE CURRENT USER + initial snapshot.
     """
     try:
+        # One user can't track the same protocol twice — friendly 409 instead
+        # of letting the (user_id, name) unique constraint throw a raw DB error.
+        existing = db.query(ProjectRecord).filter(
+            ProjectRecord.user_id == current_user.id,
+            ProjectRecord.name == request.name,
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail=f"You're already tracking '{request.name}'.",
+            )
+
         # Fetch real signals (or neutral defaults for manual/unknown protocols)
         metrics = _fetch_real_metrics(request.name, request.slug)
 
-        # Build the scoring object
+        # Build the scoring object (not persisted — used only for calculate_risk)
         defi_project = DeFiProject(
             name=request.name,
             protocol_type=request.protocol_type,
@@ -85,8 +101,9 @@ def analyze_risk(request: RiskAnalysisRequest, db: Session = Depends(get_db)):
 
         risk_result = calculate_risk(defi_project)
 
-        # Persist project row with latest signals
+        # Persist project row, tagged with the owner's user_id
         db_project = ProjectRecord(
+            user_id=current_user.id,                     # NEW — owner
             name=request.name,
             protocol_type=request.protocol_type,
             total_value_locked=request.total_value_locked,
@@ -133,8 +150,8 @@ def analyze_risk(request: RiskAnalysisRequest, db: Session = Depends(get_db)):
         db.add(history)
         db.commit()
 
-        logger.info(f"✅ Created project: {request.name} (Risk: {risk_result['overall_risk']}, "
-                    f"source: {metrics['_source']})")
+        logger.info(f"✅ Created project: {request.name} for user {current_user.id} "
+                    f"(Risk: {risk_result['overall_risk']}, source: {metrics['_source']})")
 
         return {
             "project_id": db_project.id,
@@ -147,6 +164,9 @@ def analyze_risk(request: RiskAnalysisRequest, db: Session = Depends(get_db)):
             "data_source": metrics["_source"],
         }
 
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception as e:
         db.rollback()
         logger.error(f"❌ Error analyzing risk: {e}")
@@ -154,20 +174,70 @@ def analyze_risk(request: RiskAnalysisRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/projects")
-def get_all_projects(db: Session = Depends(get_db)):
+def get_all_projects(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     try:
-        projects = db.query(ProjectRecord).all()
-        logger.info(f"📤 Retrieved {len(projects)} projects")
+        projects = db.query(ProjectRecord).filter(
+            ProjectRecord.user_id == current_user.id
+        ).all()
+        logger.info(f"📤 Retrieved {len(projects)} projects for user {current_user.id}")
         return projects
     except Exception as e:
         logger.error(f"❌ Error fetching projects: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch projects: {str(e)}")
 
 
-@router.get("/projects/{project_id}")
-def get_project(project_id: int, db: Session = Depends(get_db)):
+# IMPORTANT: /projects/bulk is declared BEFORE /projects/{project_id} so that a
+# DELETE to /projects/bulk resolves here, instead of trying to parse "bulk" as an int id.
+@router.delete("/projects/bulk")
+def delete_multiple_projects(
+    request: BulkDeleteRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     try:
-        project = db.query(ProjectRecord).filter(ProjectRecord.id == project_id).first()
+        deleted_projects = []
+        total_snapshots = 0
+        for project_id in request.project_ids:
+            project = db.query(ProjectRecord).filter(
+                ProjectRecord.id == project_id,
+                ProjectRecord.user_id == current_user.id,     # ownership
+            ).first()
+            if project:
+                project_name = project.name
+                deleted_history = db.query(RiskHistory).filter(
+                    RiskHistory.project_id == project_id
+                ).delete()
+                db.delete(project)
+                deleted_projects.append(project_name)
+                total_snapshots += deleted_history
+        db.commit()
+        logger.info(f"🗑️ Bulk delete: {len(deleted_projects)} projects for user {current_user.id}")
+        return {
+            "success": True,
+            "message": f"Successfully deleted {len(deleted_projects)} protocols",
+            "deleted_projects": deleted_projects,
+            "deleted_snapshots": total_snapshots,
+        }
+    except Exception as e:
+        db.rollback()
+        logger.error(f"❌ Error in bulk delete: {e}")
+        raise HTTPException(status_code=500, detail=f"Bulk delete failed: {str(e)}")
+
+
+@router.get("/projects/{project_id}")
+def get_project(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        project = db.query(ProjectRecord).filter(
+            ProjectRecord.id == project_id,
+            ProjectRecord.user_id == current_user.id,         # ownership
+        ).first()
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         return project
@@ -179,9 +249,16 @@ def get_project(project_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/projects/{project_id}")
-def delete_project(project_id: int, db: Session = Depends(get_db)):
+def delete_project(
+    project_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     try:
-        project = db.query(ProjectRecord).filter(ProjectRecord.id == project_id).first()
+        project = db.query(ProjectRecord).filter(
+            ProjectRecord.id == project_id,
+            ProjectRecord.user_id == current_user.id,         # ownership
+        ).first()
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
 
@@ -192,7 +269,7 @@ def delete_project(project_id: int, db: Session = Depends(get_db)):
         db.delete(project)
         db.commit()
 
-        logger.info(f"🗑️ Deleted project: {project_name} (ID: {project_id})")
+        logger.info(f"🗑️ Deleted project: {project_name} (ID: {project_id}) for user {current_user.id}")
         return {
             "success": True,
             "message": f"Successfully deleted {project_name}",
@@ -206,39 +283,15 @@ def delete_project(project_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Failed to delete project: {str(e)}")
 
 
-@router.delete("/projects/bulk")
-def delete_multiple_projects(request: BulkDeleteRequest, db: Session = Depends(get_db)):
-    try:
-        deleted_projects = []
-        total_snapshots = 0
-        for project_id in request.project_ids:
-            project = db.query(ProjectRecord).filter(ProjectRecord.id == project_id).first()
-            if project:
-                project_name = project.name
-                deleted_history = db.query(RiskHistory).filter(
-                    RiskHistory.project_id == project_id
-                ).delete()
-                db.delete(project)
-                deleted_projects.append(project_name)
-                total_snapshots += deleted_history
-        db.commit()
-        logger.info(f"🗑️ Bulk delete: {len(deleted_projects)} projects")
-        return {
-            "success": True,
-            "message": f"Successfully deleted {len(deleted_projects)} protocols",
-            "deleted_projects": deleted_projects,
-            "deleted_snapshots": total_snapshots,
-        }
-    except Exception as e:
-        db.rollback()
-        logger.error(f"❌ Error in bulk delete: {e}")
-        raise HTTPException(status_code=500, detail=f"Bulk delete failed: {str(e)}")
-
-
 @router.get("/stats")
-def get_stats(db: Session = Depends(get_db)):
+def get_stats(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     try:
-        projects = db.query(ProjectRecord).all()
+        projects = db.query(ProjectRecord).filter(
+            ProjectRecord.user_id == current_user.id
+        ).all()
         if not projects:
             return {
                 "total_projects": 0, "total_tvl": 0, "average_risk": 0,

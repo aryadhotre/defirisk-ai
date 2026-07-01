@@ -8,16 +8,21 @@ import Dashboard from "./pages/Dashboard";
 import RiskAnalysis from "./pages/Risk_Analysis";
 import SavedProjects from "./pages/SavedProjects";
 import Analytics from "./pages/Analytics";
+import Login from "./pages/Login";
+import Signup from "./pages/Signup";
 
 import Navbar from "./components/Navbar";
 import AppShell from "./components/AppShell";
+import ProtectedRoute from "./components/ProtectedRoute";
 import NoiseTexture from "./components/NoiseTexture";
-import "./index.css";
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? "https://defirisk-ai-backend.onrender.com";
+import { AuthProvider, useAuth } from "./context/AuthContext";
+import { authFetch, API_BASE } from "./lib/api";
+import "./index.css";
 
 function AppContent() {
   const location = useLocation();
+  const { token, loading: authLoading } = useAuth();
 
   const [projects, setProjects] = useState([]);
   const [loadingList, setLoadingList] = useState(true);
@@ -36,7 +41,7 @@ function AppContent() {
   const loadProjects = async () => {
     try {
       setLoadingList(true);
-      const res = await fetch(`${API_BASE}/defi/projects`);
+      const res = await authFetch(`${API_BASE}/defi/projects`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       let data = await res.json();
       if (!Array.isArray(data)) data = [];
@@ -49,9 +54,16 @@ function AppContent() {
     }
   };
 
+  // Only load once auth is resolved and the user is logged in.
   useEffect(() => {
-    loadProjects();
-  }, []);
+    if (authLoading) return;
+    if (token) {
+      loadProjects();
+    } else {
+      setProjects([]);
+      setLoadingList(false);
+    }
+  }, [authLoading, token]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -66,13 +78,25 @@ function AppContent() {
         user_activity_score: Number(form.user_activity_score),
       };
 
-      const res = await fetch(`${API_BASE}/defi/analyze_risk`, {
+      const res = await authFetch(`${API_BASE}/defi/analyze_risk`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
-      if (!res.ok) throw new Error("Request failed");
+      if (!res.ok) {
+        // Surface the backend's reason (e.g. 409 "You're already tracking...")
+        // up to the caller so Risk Analysis can show it inline.
+        let detail = "Analysis failed. Please try again.";
+        try {
+          const data = await res.json();
+          if (data && data.detail) detail = data.detail;
+        } catch {
+          /* non-JSON error body — keep the default message */
+        }
+        throw new Error(detail);
+      }
+
       await loadProjects();
 
       setForm({
@@ -84,8 +108,6 @@ function AppContent() {
         user_activity_score: "",
         slug: "",
       });
-    } catch (err) {
-      console.error("Error submitting form:", err);
     } finally {
       setSubmitting(false);
     }
@@ -143,35 +165,41 @@ function AppContent() {
               element={<Landing projects={projects} kpis={kpis} loadingList={loadingList} />}
             />
 
-            {/* app pages share AppShell's centered max-w-7xl main */}
-            <Route element={<AppShell />}>
-              <Route
-                path="/dashboard"
-                element={<Dashboard projects={projects} loadingList={loadingList} kpis={kpis} />}
-              />
-              <Route
-                path="/risk"
-                element={
-                  <RiskAnalysis
-                    form={form}
-                    setForm={setForm}
-                    submitting={submitting}
-                    handleSubmit={handleSubmit}
-                  />
-                }
-              />
-              <Route path="/saved" element={<SavedProjects />} />
-              <Route path="/analytics" element={<Analytics />} />
-              <Route
-                path="/docs"
-                element={
-                  <iframe
-                    src="https://defirisk-ai-backend.onrender.com/docs"
-                    className="w-full h-[80vh] rounded-panel border border-line bg-canvas"
-                    title="API Docs"
-                  />
-                }
-              />
+            {/* public auth routes */}
+            <Route path="/login" element={<Login />} />
+            <Route path="/signup" element={<Signup />} />
+
+            {/* protected app pages — require a logged-in user */}
+            <Route element={<ProtectedRoute />}>
+              <Route element={<AppShell />}>
+                <Route
+                  path="/dashboard"
+                  element={<Dashboard projects={projects} loadingList={loadingList} kpis={kpis} />}
+                />
+                <Route
+                  path="/risk"
+                  element={
+                    <RiskAnalysis
+                      form={form}
+                      setForm={setForm}
+                      submitting={submitting}
+                      handleSubmit={handleSubmit}
+                    />
+                  }
+                />
+                <Route path="/saved" element={<SavedProjects />} />
+                <Route path="/analytics" element={<Analytics />} />
+                <Route
+                  path="/docs"
+                  element={
+                    <iframe
+                      src="https://defirisk-ai-backend.onrender.com/docs"
+                      className="w-full h-[80vh] rounded-panel border border-line bg-canvas"
+                      title="API Docs"
+                    />
+                  }
+                />
+              </Route>
             </Route>
           </Routes>
         </motion.div>
@@ -183,7 +211,9 @@ function AppContent() {
 export default function App() {
   return (
     <Router>
-      <AppContent />
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
     </Router>
   );
 }

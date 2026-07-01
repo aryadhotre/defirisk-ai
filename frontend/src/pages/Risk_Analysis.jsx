@@ -2,7 +2,7 @@
 import { motion } from "framer-motion";
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, CheckCircle, ShieldCheck, Layers, Loader2 } from "lucide-react";
+import { Search, CheckCircle, AlertCircle, ShieldCheck, Layers, Loader2 } from "lucide-react";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "https://defirisk-ai-backend.onrender.com";
 const DEFILLAMA_BASE = `${API_BASE}/defillama`;
@@ -18,6 +18,7 @@ const fmtTVL = (value) => {
 export default function Risk_Analysis({ form, setForm, submitting, handleSubmit }) {
   const navigate = useNavigate();
   const [showSuccess, setShowSuccess] = useState(false);
+  const [error, setError] = useState("");
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState([]);
@@ -55,10 +56,16 @@ export default function Risk_Analysis({ form, setForm, submitting, handleSubmit 
   }, [searchQuery]);
 
   const selectProtocol = async (protocol) => {
+    setError("");
     try {
       const url = `${DEFILLAMA_BASE}/protocol/${protocol.slug}`;
       const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        if (res.status === 404) {
+          throw new Error(`Couldn't load "${protocol.name}" — DeFiLlama has no data for it.`);
+        }
+        throw new Error(`HTTP ${res.status}`);
+      }
       const response = await res.json();
 
       if (response.success && response.data) {
@@ -78,15 +85,22 @@ export default function Risk_Analysis({ form, setForm, submitting, handleSubmit 
       }
     } catch (err) {
       console.error("Error fetching protocol:", err);
-      alert(`Failed to load ${protocol.name}. ${err.message}`);
+      setError(err.message || `Failed to load ${protocol.name}.`);
+      setShowDropdown(false);
     }
   };
 
   const onSubmit = async (e) => {
     e.preventDefault();
-    await handleSubmit(e);
-    setShowSuccess(true);
-    setTimeout(() => navigate("/dashboard"), 1800);
+    setError("");
+    try {
+      await handleSubmit(e);
+      setShowSuccess(true);
+      setTimeout(() => navigate("/dashboard"), 500);
+    } catch (err) {
+      console.error("Error analyzing protocol:", err);
+      setError(err.message || "Something went wrong. Please try again.");
+    }
   };
 
   const canSubmit = selectedProtocol && form.name && form.total_value_locked;
@@ -109,6 +123,15 @@ export default function Risk_Analysis({ form, setForm, submitting, handleSubmit 
         </motion.div>
       )}
 
+      {error && (
+        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
+          className="flex items-center gap-3 p-4 rounded-panel border"
+          style={{ color: "#FF5D5D", background: "rgba(255,93,93,.08)", borderColor: "rgba(255,93,93,.25)" }}>
+          <AlertCircle className="w-5 h-5 shrink-0" />
+          <span className="font-mono text-sm tracking-wide">{error}</span>
+        </motion.div>
+      )}
+
       {/* search panel */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="relative">
         <div className="pointer-events-none absolute -inset-8 -z-0 opacity-60">
@@ -127,7 +150,11 @@ export default function Risk_Analysis({ form, setForm, submitting, handleSubmit 
                 type="text"
                 placeholder="Type to search (e.g. Uniswap, Aave, GMX)…"
                 value={searchQuery}
-                onChange={(e) => { setSearchQuery(e.target.value); if (selectedProtocol) setSelectedProtocol(null); }}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setError("");
+                  if (selectedProtocol) setSelectedProtocol(null);
+                }}
                 onFocus={() => searchQuery && searchResults.length > 0 && setShowDropdown(true)}
                 className="w-full rounded-xl pl-11 pr-11 py-3.5 bg-canvas/60 border border-line text-ink placeholder:text-faint font-mono text-sm outline-none transition-colors focus:border-[#FFB23D]/50"
               />
